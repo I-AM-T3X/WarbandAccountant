@@ -1,0 +1,23 @@
+## Interface: 120000
+## Title: Warband Accountant
+## Notes: Automated Warband gold management with per-character targets
+## Author: I_AM_T3X
+## Version: 1.0.0
+## SavedVariables: WarbandAccountantDB
+## Category: Inventory
+## Category-enUS: Inventory
+## Category-deDE: Inventar
+## Category-esES: Inventario
+## Category-frFR: Inventaire
+## Category-itIT: Inventario
+## Category-koKR: 가방
+## Category-ptBR: Inventário
+## Category-ruRU: Инвентарь
+## Category-zhCN: 背包
+## Category-zhTW: 背包
+
+# Core modules
+Data.lua
+Core.lua
+Settings.lua
+UI.lua
