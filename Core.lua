@@ -1,11 +1,9 @@
 local ADDON_NAME, WarbandAccountant = ...
-local Data = WarbandAccountant.Data
+-- Don't cache Data at file level - use WarbandAccountant.Data at runtime to avoid load order issues
 
--- Core namespace
 local Core = {}
 WarbandAccountant.Core = Core
 
--- Export FormatGold for other modules
 function WarbandAccountant.FormatGold(copper)
     local gold = math.floor(copper / 10000)
     local silver = math.floor((copper % 10000) / 100)
@@ -20,21 +18,16 @@ function WarbandAccountant.FormatGold(copper)
     end
 end
 
--- State
 local isBankOpen = false
+local hasProcessedThisSession = false
+local pendingAutoAmount = 0 -- Track expected auto-transaction amount
+local pendingAutoType = nil -- "DEPOSIT" or "WITHDRAW"
+local lastWarbandBalance = 0
 
--- Utility: Get Warband Bank gold
 local function GetWarbandGold()
     return C_Bank.FetchDepositedMoney(Enum.BankType.Account) or 0
 end
 
--- Check if we can interact with warband bank
-local function CanUseWarbandBank()
-    return C_Bank.CanDepositMoney(Enum.BankType.Account) or 
-           C_Bank.CanWithdrawMoney(Enum.BankType.Account, 1)
-end
-
--- Execute deposit
 local function ExecuteDeposit(amount)
     if not C_Bank.CanDepositMoney(Enum.BankType.Account) then
         return false, "Cannot deposit at this time"
@@ -51,7 +44,6 @@ local function ExecuteDeposit(amount)
     return true
 end
 
--- Execute withdrawal
 local function ExecuteWithdrawal(amount)
     local warbandGold = GetWarbandGold()
     if warbandGold < amount then
@@ -70,12 +62,24 @@ local function ExecuteWithdrawal(amount)
     return true
 end
 
--- Main logic: Check and process transfers
 function Core:ProcessTransfers(skipConfirmation)
     if not isBankOpen then return end
     
+    if hasProcessedThisSession and not skipConfirmation then
+        return
+    end
+    
+    local Data = WarbandAccountant.Data
     local charData = Data:GetCharacterData()
     if not charData or not charData.enabled then return end
+    
+    if charData.paused then
+        if not skipConfirmation then
+            self:NotifyTransfer("skipped (paused)", 0)
+        end
+        hasProcessedThisSession = true
+        return
+    end
     
     local currentGold = GetMoney()
     local targetGold = charData.targetGold or 0
@@ -87,8 +91,19 @@ function Core:ProcessTransfers(skipConfirmation)
                 self:ShowConfirmation("deposit", excess)
                 return
             end
-            ExecuteDeposit(excess)
-            self:NotifyTransfer("deposited", excess)
+            
+            -- Set pending transaction BEFORE executing
+            pendingAutoAmount = excess
+            pendingAutoType = "DEPOSIT"
+            lastWarbandBalance = GetWarbandGold() -- Store pre-transaction balance
+            
+            local success = ExecuteDeposit(excess)
+            
+            if not success then
+                pendingAutoAmount = 0
+                pendingAutoType = nil
+            end
+            -- Don't add ledger entry here - wait for ACCOUNT_MONEY to confirm it
         end
     elseif currentGold < targetGold then
         local needed = targetGold - currentGold
@@ -103,41 +118,48 @@ function Core:ProcessTransfers(skipConfirmation)
                 self:ShowConfirmation("withdraw", needed)
                 return
             end
+            
+            -- Set pending transaction BEFORE executing
+            pendingAutoAmount = needed
+            pendingAutoType = "WITHDRAW"
+            lastWarbandBalance = GetWarbandGold() -- Store pre-transaction balance
+            
             local success, err = ExecuteWithdrawal(needed)
-            if success then
-                self:NotifyTransfer("withdrawn", needed)
-            else
+            
+            if not success then
+                pendingAutoAmount = 0
+                pendingAutoType = nil
                 self:NotifyError(err)
             end
+            -- Don't add ledger entry here - wait for ACCOUNT_MONEY to confirm it
         end
     end
     
-    -- Update data after transfer
     Data:UpdateCharacterGold()
     WarbandAccountant.UI:UpdateTooltip()
 end
 
--- Notification
 function Core:NotifyTransfer(action, amount)
-    local msg = string.format("|cFF00FF00Warband Accountant:|r %s %s", 
-        WarbandAccountant.FormatGold(amount), action)
-    print(msg)
+    if amount == 0 then
+        print(string.format("|cFF00FF00Warband Accountant:|r %s", action))
+    else
+        print(string.format("|cFF00FF00Warband Accountant:|r %s %s", WarbandAccountant.FormatGold(amount), action))
+    end
 end
 
 function Core:NotifyError(err)
     print(string.format("|cFFFF0000Warband Accountant Error:|r %s", err or "Unknown error"))
 end
 
--- Confirmation dialog
 function Core:ShowConfirmation(transferType, amount)
     local dialogName = "WARBANDACCOUNTANT_CONFIRM_" .. transferType:upper()
     
     if not StaticPopupDialogs[dialogName] then
         StaticPopupDialogs[dialogName] = {
-            text = "Warband Accountant\n\n%1$s %2$s?",
+            text = "Warband Accountant\n\n%s %s?",
             button1 = "Yes",
             button2 = "No",
-            OnAccept = function(self, data)
+            OnAccept = function()
                 Core:ProcessTransfers(true)
             end,
             timeout = 0,
@@ -148,16 +170,13 @@ function Core:ShowConfirmation(transferType, amount)
     end
     
     local actionText = transferType == "deposit" and "Deposit" or "Withdraw"
-    local text = string.format("Warband Accountant\n\n%s %s %s?", 
-        actionText, WarbandAccountant.FormatGold(amount), 
+    local text = string.format("%s %s %s?", actionText, WarbandAccountant.FormatGold(amount), 
         transferType == "deposit" and "to Warband Bank?" or "from Warband Bank?")
     
     StaticPopup_Show(dialogName, text)
 end
 
--- Event handling
 local eventFrame = CreateFrame("Frame")
-
 eventFrame:RegisterEvent("PLAYER_LOGIN")
 eventFrame:RegisterEvent("PLAYER_MONEY")
 eventFrame:RegisterEvent("BANKFRAME_OPENED")
@@ -166,38 +185,97 @@ eventFrame:RegisterEvent("ACCOUNT_MONEY")
 
 eventFrame:SetScript("OnEvent", function(self, event, ...)
     if event == "PLAYER_LOGIN" then
-        Data:Init()
+        WarbandAccountant.Data:Init()
         WarbandAccountant.Settings:Init()
         WarbandAccountant.UI:Init()
         
-        -- Initialize session data after a short delay to ensure money is loaded
+        lastWarbandBalance = GetWarbandGold()
+        
         C_Timer.After(1, function()
-            Data:UpdateCharacterGold()
+            WarbandAccountant.Data:UpdateCharacterGold()
             WarbandAccountant.UI:UpdateTooltip()
         end)
         
     elseif event == "PLAYER_MONEY" then
-        Data:UpdateCharacterGold()
-        if isBankOpen then
-            Core:ProcessTransfers()
-        end
+        WarbandAccountant.Data:UpdateCharacterGold()
         WarbandAccountant.UI:UpdateTooltip()
         
     elseif event == "BANKFRAME_OPENED" then
         isBankOpen = true
-        C_Timer.After(0.1, function()
-            Core:ProcessTransfers()
+        hasProcessedThisSession = false
+        lastWarbandBalance = GetWarbandGold()
+        C_Timer.After(0.5, function()
+            if isBankOpen then
+                Core:ProcessTransfers()
+            end
         end)
         
     elseif event == "BANKFRAME_CLOSED" then
         isBankOpen = false
+        hasProcessedThisSession = false
         
     elseif event == "ACCOUNT_MONEY" then
+        local Data = WarbandAccountant.Data
+        local currentBalance = GetWarbandGold()
+        local delta = currentBalance - lastWarbandBalance
+        
+        -- Check if this matches our pending auto-transaction
+        if pendingAutoType and pendingAutoAmount > 0 then
+            local expectedDelta = (pendingAutoType == "DEPOSIT") and pendingAutoAmount or -pendingAutoAmount
+            
+            if math.abs(delta - expectedDelta) < 1 then -- Allow tiny rounding errors
+                -- This is our auto-transaction completing, record it
+                Data:AddLedgerEntry({
+                    amount = pendingAutoAmount,
+                    type = pendingAutoType,
+                    balanceAfter = currentBalance,
+                    note = pendingAutoType == "DEPOSIT" and "Auto-deposit excess" or "Auto-withdraw deficit"
+                })
+                
+                if pendingAutoType == "DEPOSIT" then
+                    Core:NotifyTransfer("deposited", pendingAutoAmount)
+                else
+                    Core:NotifyTransfer("withdrawn", pendingAutoAmount)
+                end
+                
+                hasProcessedThisSession = true
+                pendingAutoAmount = 0
+                pendingAutoType = nil
+            else
+                -- Balance changed but not by expected amount, treat as manual
+                recordManualTransaction(delta, currentBalance)
+            end
+        else
+            -- No pending auto-transaction, this is manual
+            if delta ~= 0 then
+                recordManualTransaction(delta, currentBalance)
+            end
+        end
+        
+        lastWarbandBalance = currentBalance
         WarbandAccountant.UI:UpdateTooltip()
     end
 end)
 
--- Public API
+function recordManualTransaction(delta, currentBalance)
+    local Data = WarbandAccountant.Data
+    if delta > 0 then
+        Data:AddLedgerEntry({
+            amount = delta,
+            type = "MANUAL_DEPOSIT",
+            balanceAfter = currentBalance,
+            note = "Manual deposit"
+        })
+    elseif delta < 0 then
+        Data:AddLedgerEntry({
+            amount = math.abs(delta),
+            type = "MANUAL_WITHDRAW",
+            balanceAfter = currentBalance,
+            note = "Manual withdrawal"
+        })
+    end
+end
+
 function Core:IsBankOpen()
     return isBankOpen
 end
@@ -207,5 +285,6 @@ function Core:GetWarbandGold()
 end
 
 function Core:ForceProcess()
+    hasProcessedThisSession = false
     Core:ProcessTransfers()
 end
