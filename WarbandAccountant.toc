@@ -2,7 +2,7 @@
 ## Title: Warband Accountant
 ## Notes: Automated Warband gold management with per-character targets
 ## Author: I_AM_T3X
-## Version: 1.0.1
+## Version: 1.0.2
 ## SavedVariables: WarbandAccountantDB
 
 # Libraries
