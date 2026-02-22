@@ -1,5 +1,4 @@
 local ADDON_NAME, WarbandAccountant = ...
--- Don't cache Data at file level - use WarbandAccountant.Data at runtime to avoid load order issues
 
 local Core = {}
 WarbandAccountant.Core = Core
@@ -20,9 +19,10 @@ end
 
 local isBankOpen = false
 local hasProcessedThisSession = false
-local pendingAutoAmount = 0 -- Track expected auto-transaction amount
-local pendingAutoType = nil -- "DEPOSIT" or "WITHDRAW"
+local pendingAutoAmount = 0
+local pendingAutoType = nil
 local lastWarbandBalance = 0
+local guildBankOpen = false
 
 local function GetWarbandGold()
     return C_Bank.FetchDepositedMoney(Enum.BankType.Account) or 0
@@ -92,10 +92,9 @@ function Core:ProcessTransfers(skipConfirmation)
                 return
             end
             
-            -- Set pending transaction BEFORE executing
             pendingAutoAmount = excess
             pendingAutoType = "DEPOSIT"
-            lastWarbandBalance = GetWarbandGold() -- Store pre-transaction balance
+            lastWarbandBalance = GetWarbandGold()
             
             local success = ExecuteDeposit(excess)
             
@@ -103,7 +102,6 @@ function Core:ProcessTransfers(skipConfirmation)
                 pendingAutoAmount = 0
                 pendingAutoType = nil
             end
-            -- Don't add ledger entry here - wait for ACCOUNT_MONEY to confirm it
         end
     elseif currentGold < targetGold then
         local needed = targetGold - currentGold
@@ -119,10 +117,9 @@ function Core:ProcessTransfers(skipConfirmation)
                 return
             end
             
-            -- Set pending transaction BEFORE executing
             pendingAutoAmount = needed
             pendingAutoType = "WITHDRAW"
-            lastWarbandBalance = GetWarbandGold() -- Store pre-transaction balance
+            lastWarbandBalance = GetWarbandGold()
             
             local success, err = ExecuteWithdrawal(needed)
             
@@ -131,7 +128,6 @@ function Core:ProcessTransfers(skipConfirmation)
                 pendingAutoType = nil
                 self:NotifyError(err)
             end
-            -- Don't add ledger entry here - wait for ACCOUNT_MONEY to confirm it
         end
     end
     
@@ -176,12 +172,37 @@ function Core:ShowConfirmation(transferType, amount)
     StaticPopup_Show(dialogName, text)
 end
 
+-- Function to update guild bank data - separated for reuse
+function Core:UpdateGuildBankData()
+    local Data = WarbandAccountant.Data
+    local guildName = select(1, GetGuildInfo("player"))
+    
+    if not guildName then return end
+    
+    -- Use raw API check here, not the cached IsGuildMaster()
+    -- If we can access guild bank money, save it regardless of cache
+    local isGM = IsGuildLeader()
+    local gold = GetGuildBankMoney() or 0
+    
+    if isGM then
+        Data:SetGuildBankData(guildName, gold)
+        -- Reset the GM cache to true since we confirmed it
+        if Data:GetDB() and Data:GetDB().guildMasterCache then
+            Data:GetDB().guildMasterCache[Data:GetCurrentCharacterID()] = true
+        end
+        WarbandAccountant.UI:UpdateTooltip()
+    end
+end
+
 local eventFrame = CreateFrame("Frame")
 eventFrame:RegisterEvent("PLAYER_LOGIN")
 eventFrame:RegisterEvent("PLAYER_MONEY")
 eventFrame:RegisterEvent("BANKFRAME_OPENED")
 eventFrame:RegisterEvent("BANKFRAME_CLOSED")
 eventFrame:RegisterEvent("ACCOUNT_MONEY")
+eventFrame:RegisterEvent("GUILDBANKFRAME_OPENED")
+eventFrame:RegisterEvent("GUILDBANKFRAME_CLOSED")
+eventFrame:RegisterEvent("GUILDBANK_UPDATE_MONEY")
 
 eventFrame:SetScript("OnEvent", function(self, event, ...)
     if event == "PLAYER_LOGIN" then
@@ -219,12 +240,10 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
         local currentBalance = GetWarbandGold()
         local delta = currentBalance - lastWarbandBalance
         
-        -- Check if this matches our pending auto-transaction
         if pendingAutoType and pendingAutoAmount > 0 then
             local expectedDelta = (pendingAutoType == "DEPOSIT") and pendingAutoAmount or -pendingAutoAmount
             
-            if math.abs(delta - expectedDelta) < 1 then -- Allow tiny rounding errors
-                -- This is our auto-transaction completing, record it
+            if math.abs(delta - expectedDelta) < 1 then
                 Data:AddLedgerEntry({
                     amount = pendingAutoAmount,
                     type = pendingAutoType,
@@ -242,11 +261,9 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
                 pendingAutoAmount = 0
                 pendingAutoType = nil
             else
-                -- Balance changed but not by expected amount, treat as manual
                 recordManualTransaction(delta, currentBalance)
             end
         else
-            -- No pending auto-transaction, this is manual
             if delta ~= 0 then
                 recordManualTransaction(delta, currentBalance)
             end
@@ -254,6 +271,26 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
         
         lastWarbandBalance = currentBalance
         WarbandAccountant.UI:UpdateTooltip()
+        
+    elseif event == "GUILDBANKFRAME_OPENED" then
+        guildBankOpen = true
+        -- Delayed update since money data loads asynchronously from server
+        C_Timer.After(1.0, function()
+            if guildBankOpen then
+                Core:UpdateGuildBankData()
+            end
+        end)
+        
+    elseif event == "GUILDBANKFRAME_CLOSED" then
+        guildBankOpen = false
+        -- Final update on close to catch withdrawals/deposits
+        Core:UpdateGuildBankData()
+        
+    elseif event == "GUILDBANK_UPDATE_MONEY" then
+        -- Update immediately when money changes
+        if guildBankOpen then
+            Core:UpdateGuildBankData()
+        end
     end
 end)
 
@@ -282,6 +319,55 @@ end
 
 function Core:GetWarbandGold()
     return GetWarbandGold()
+end
+
+function Core:GetGuildBankGold()
+    local Data = WarbandAccountant.Data
+    local guildName = select(1, GetGuildInfo("player"))
+    local currentRealm = GetRealmName()
+    
+    -- If we're a GM of current guild, save and return current guild data
+    if guildName and Data:IsGuildMaster() then
+        local gold = GetGuildBankMoney() or 0
+        Data:SetGuildBankData(guildName, gold)
+        return gold, guildName
+    end
+    
+    -- If we have cached data for current guild (from when we were GM there), show it
+    if guildName then
+        local data = Data:GetGuildBankData(guildName)
+        if data and data.realm == currentRealm then
+            return data.gold or 0, guildName
+        end
+    end
+    
+    -- If not GM of current guild, fall back to personal guild bank data
+    -- This allows alts in other guilds to still see their main's guild bank
+    return self:GetPersonalGuildBankGold()
+end
+
+function Core:GetPersonalGuildBankGold()
+    local Data = WarbandAccountant.Data
+    local db = Data:GetDB()
+    if not db or not db.guildBankData then return 0, nil end
+    
+    local currentRealm = GetRealmName()
+    
+    -- Prefer guild bank data on the current realm
+    for gName, data in pairs(db.guildBankData) do
+        if data and data.realm == currentRealm and (data.gold or 0) > 0 then
+            return data.gold, gName
+        end
+    end
+    
+    -- If nothing on current realm, use any available (in case of realm transfer)
+    for gName, data in pairs(db.guildBankData) do
+        if data and (data.gold or 0) > 0 then
+            return data.gold, gName
+        end
+    end
+    
+    return 0, nil
 end
 
 function Core:ForceProcess()

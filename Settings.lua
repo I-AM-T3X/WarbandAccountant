@@ -11,15 +11,13 @@ function SettingsModule:CreateBlizzardSettings()
     local Data = WarbandAccountant.Data
     
     local frame = CreateFrame("Frame", "WarbandAccountantSettingsCanvas", UIParent)
-    frame:SetSize(600, 450)
+    frame:SetSize(600, 400)
     frame.name = "Warband Accountant"
     
-    -- Simple background
     local bg = frame:CreateTexture(nil, "BACKGROUND")
     bg:SetAllPoints()
     bg:SetColorTexture(0.05, 0.05, 0.05, 0.9)
     
-    -- Header
     local title = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalHuge")
     title:SetPoint("TOP", 0, -40)
     title:SetText("Warband Accountant")
@@ -27,7 +25,7 @@ function SettingsModule:CreateBlizzardSettings()
     
     local subtitle = frame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     subtitle:SetPoint("TOP", title, "BOTTOM", 0, -5)
-    subtitle:SetText("Use /wba to open the main window with Targets and Ledger tabs")
+    subtitle:SetText("Use /wba to open the main window with Targets and Settings tabs")
     subtitle:SetTextColor(0.6, 0.6, 0.6)
     
     local version = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
@@ -35,7 +33,6 @@ function SettingsModule:CreateBlizzardSettings()
     version:SetText("Version: 1.0.1")
     version:SetTextColor(0.5, 0.5, 0.5)
     
-    -- Features Section - Two Column Layout (Centered Under Features)
     local featuresHeader = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
     featuresHeader:SetPoint("TOP", version, "BOTTOM", 0, -25)
     featuresHeader:SetText("Features")
@@ -75,7 +72,6 @@ function SettingsModule:CreateBlizzardSettings()
         item:SetTextColor(0.8, 0.8, 0.8)
     end
     
-    -- BIG RED BUTTON
     local openBtn = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
     openBtn:SetPoint("TOP", featuresHeader, "BOTTOM", 0, -130)
     openBtn:SetSize(200, 50)
@@ -83,7 +79,6 @@ function SettingsModule:CreateBlizzardSettings()
     openBtn:SetHighlightFontObject("GameFontHighlightLarge")
     openBtn:SetText("Open Options")
     
-    -- Style it red
     local function StyleButtonAsRed(btn)
         local regions = {btn:GetRegions()}
         for _, region in ipairs(regions) do
@@ -99,7 +94,6 @@ function SettingsModule:CreateBlizzardSettings()
         WarbandAccountant.UI:ToggleMainWindow()
     end)
     
-    -- Minimap checkbox - BELOW THE BUTTON
     local checkbox = CreateFrame("CheckButton", nil, frame, "InterfaceOptionsCheckButtonTemplate")
     checkbox:SetPoint("TOP", openBtn, "BOTTOM", 0, -25)
     
@@ -117,7 +111,11 @@ function SettingsModule:CreateBlizzardSettings()
         end
     end)
     
-    -- Reset Statistics Button (small, bottom right)
+    local ledgerNote = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    ledgerNote:SetPoint("TOP", checkbox, "BOTTOM", 0, -20)
+    ledgerNote:SetText("Left-click minimap button to open Ledger")
+    ledgerNote:SetTextColor(0.6, 0.6, 0.6)
+    
     local resetBtn = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
     resetBtn:SetPoint("BOTTOMRIGHT", -20, 20)
     resetBtn:SetSize(120, 22)
@@ -139,13 +137,11 @@ function SettingsModule:CreateBlizzardSettings()
         hideOnEscape = true,
     }
     
-    -- Footer
     local infoText = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     infoText:SetPoint("BOTTOM", 0, 15)
     infoText:SetText("Configure automatic gold management for your Warband")
     infoText:SetTextColor(0.5, 0.5, 0.5)
     
-    -- Register
     local category = Settings.RegisterCanvasLayoutCategory(frame, "Warband Accountant")
     Settings.RegisterAddOnCategory(category)
     
@@ -165,12 +161,19 @@ SlashCmdList["WARBANDACCOUNTANT"] = function(msg)
         print("  /wba config - Open settings")
         print("  /wba toggle - Toggle main window")
         print("  /wba process - Force process transfers")
+        print("  /wba resetgm - Reset Guild Master cache (if promoted)")
     elseif msg == "config" then
         SettingsModule:OpenSettings()
     elseif msg == "toggle" then
         WarbandAccountant.UI:ToggleMainWindow()
     elseif msg == "process" then
         WarbandAccountant.Core:ForceProcess()
+    elseif msg == "resetgm" then
+        WarbandAccountant.Data:ResetGuildMasterCache()
+        print("|cFF00FF00Warband Accountant:|r Guild Master cache cleared. Will check again on next tooltip.")
+	elseif msg == "clearguild" then
+        WarbandAccountant.Data:ClearGuildBankData()
+        print("|cFF00FF00Warband Accountant:|r Guild bank data cleared.")	
     else
         print("|cFFFF0000Warband Accountant:|r Unknown command. Type /wba help")
     end

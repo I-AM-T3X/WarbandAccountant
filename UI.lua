@@ -5,6 +5,7 @@ local UI = {}
 WarbandAccountant.UI = UI
 
 local mainFrame = nil
+local ledgerFrame = nil
 local minimapLDB = nil
 
 local hasLibDBIcon = LibStub and LibStub("LibDBIcon-1.0", true)
@@ -71,6 +72,7 @@ local function SetupTooltip(tooltip)
     local warbandGold = Core:GetWarbandGold()
     tooltip:AddDoubleLine("Warband Bank:", WarbandAccountant.FormatGold(warbandGold), 0.8, 0.8, 0, 1, 1, 0)
     
+    -- Total Made and Total Session moved back under Warband Bank
     local totalDeposited, totalWithdrawn = Data:GetTotalLedgerStats()
     local totalMade = totalDeposited - totalWithdrawn
     if totalMade ~= 0 or totalDeposited > 0 or totalWithdrawn > 0 then
@@ -96,6 +98,69 @@ local function SetupTooltip(tooltip)
     end
     
     tooltip:AddLine(" ")
+    
+    -- Guild Banks Section (now below Total Made)
+    local db = Data:GetDB()
+    local currentGuild = select(1, GetGuildInfo("player"))
+    local currentRealm = GetRealmName()
+    local guildBanksShown = false
+    
+    if db and db.guildBankData then
+        local guildList = {}
+        
+        for gName, data in pairs(db.guildBankData) do
+            if data and (data.gold or 0) > 0 then
+                table.insert(guildList, {
+                    name = gName,
+                    gold = data.gold,
+                    realm = data.realm,
+                    isCurrent = (gName == currentGuild and data.realm == currentRealm)
+                })
+            end
+        end
+        
+        -- Sort: current guild first, then current realm, then by gold amount descending
+        table.sort(guildList, function(a, b)
+            if a.isCurrent ~= b.isCurrent then
+                return a.isCurrent
+            end
+            if (a.realm == currentRealm) ~= (b.realm == currentRealm) then
+                return a.realm == currentRealm
+            end
+            return a.gold > b.gold
+        end)
+        
+        if #guildList > 0 then
+            tooltip:AddLine("Guild Banks:", 0.8, 0.8, 0.8)
+            
+            for _, guild in ipairs(guildList) do
+                local nameColor = guild.isCurrent and "|cFF00FF00" or "|cFFFFFF00"
+                local indicators = ""
+                
+                -- Mark other realms
+                if guild.realm ~= currentRealm then
+                    indicators = " (*)"
+                end
+                
+                tooltip:AddDoubleLine("  " .. nameColor .. guild.name .. "|r" .. indicators, WarbandAccountant.FormatGold(guild.gold), 1, 0.82, 0, 1, 1, 1)
+            end
+            
+            guildBanksShown = true
+            tooltip:AddLine(" ")
+        end
+    end
+    
+    -- Fallback if no stored data but we're GM of current guild
+    if not guildBanksShown and currentGuild then
+        if Data:IsGuildMaster() then
+            local gold = GetGuildBankMoney() or 0
+            if gold > 0 then
+                tooltip:AddLine("Guild Banks:", 0.8, 0.8, 0.8)
+                tooltip:AddDoubleLine("  |cFF00FF00" .. currentGuild .. "|r", WarbandAccountant.FormatGold(gold), 1, 0.82, 0, 1, 1, 1)
+                tooltip:AddLine(" ")
+            end
+        end
+    end
     
     local characters = Data:GetAllCharacters()
     local totalTracked = 0
@@ -138,8 +203,9 @@ local function SetupTooltip(tooltip)
     tooltip:AddLine(" ")
     tooltip:AddDoubleLine("Total Tracked:", WarbandAccountant.FormatGold(totalTracked), 0.6, 0.8, 1, 0.6, 0.8, 1)
     tooltip:AddLine(" ")
+    tooltip:AddLine("Left-Click: Ledger", 0.5, 0.5, 0.5)
     tooltip:AddLine("Right-Click: Settings", 0.5, 0.5, 0.5)
-    tooltip:AddLine("Type /wba to open window", 0.5, 0.5, 0.5)
+    tooltip:AddLine("Type /wba for Targets", 0.5, 0.5, 0.5)
 end
 
 function UI:Init()
@@ -158,9 +224,10 @@ function UI:Init()
         icon = "Interface\\AddOns\\WarbandAccountant\\Textures\\minimap",
         OnClick = function(self, button)
             if button == "RightButton" then 
-				WarbandAccountant.Settings:OpenSettings() 
-			end
-			-- Left-click disabled - use /wba toggle to open the window
+                WarbandAccountant.Settings:OpenSettings()
+            else
+                UI:ToggleLedgerWindow()
+            end
         end,
         OnTooltipShow = function(tooltip) SetupTooltip(tooltip) end,
     })
@@ -188,7 +255,7 @@ end
 
 local function CreateTab(parent, text, id)
     local tab = CreateFrame("Button", nil, parent)
-    tab:SetSize(115, 36)
+    tab:SetSize(130, 36)
     
     tab.left = tab:CreateTexture(nil, "BACKGROUND")
     tab.left:SetTexture("Interface\\PaperDollInfoFrame\\UI-Character-InactiveTab")
@@ -242,40 +309,171 @@ local function CreateTab(parent, text, id)
         end
     end
     
-    tab:SetScript("OnClick", function(self)
-        for _, t in ipairs(parent.tabs or {}) do
-            t:SetActive(false)
-        end
-        self:SetActive(true)
-        parent.selectedTab = id
-        
-        parent.targetsContent:Hide()
-        parent.ledgerContent:Hide()
-        if parent.settingsContent then parent.settingsContent:Hide() end
-        
-        if id == 1 then
-            parent.targetsContent:Show()
-            UI:UpdateTargets()
-        elseif id == 2 then
-            parent.ledgerContent:Show()
-            UI:UpdateLedger()
-        elseif id == 3 then
-            parent.settingsContent:Show()
-        end
+    return tab
+end
+
+local function CreateLedgerWindow()
+    local f = CreateFrame("Frame", "WarbandAccountantLedgerFrame", UIParent, "BasicFrameTemplateWithInset")
+    f:SetSize(850, 520)
+    
+    local Data = WarbandAccountant.Data
+    local db = Data:GetDB()
+    db.framePositions = db.framePositions or {}
+    
+    if db.framePositions.ledger and db.framePositions.ledger.point then
+        f:SetPoint(db.framePositions.ledger.point, db.framePositions.ledger.x, db.framePositions.ledger.y)
+    else
+        f:SetPoint("CENTER", 0, 0)
+    end
+    
+    f:SetMovable(true)
+    f:EnableMouse(true)
+    f:RegisterForDrag("LeftButton")
+    f:SetScript("OnDragStart", f.StartMoving)
+    f:SetScript("OnDragStop", function(self)
+        self:StopMovingOrSizing()
+        local point, _, _, x, y = self:GetPoint(1)
+        db.framePositions.ledger = {point = point, x = x, y = y}
     end)
     
-    return tab
+    f:SetFrameStrata("HIGH")
+    f:EnableKeyboard(true)
+    f:SetScript("OnKeyDown", function(self, key)
+        if key == "ESCAPE" then 
+            self:Hide()
+            self:SetPropagateKeyboardInput(false)
+        else
+            self:SetPropagateKeyboardInput(true)
+        end
+    end)
+    tinsert(UISpecialFrames, f:GetName())
+    
+    f.TitleBg:SetHeight(25)
+    f.title = f:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+    f.title:SetPoint("TOP", f.TitleBg, "TOP", 0, -6)
+    f.title:SetText("Warband Accountant - Ledger")
+    
+    local warbandContent = CreateFrame("Frame", nil, f)
+    warbandContent:SetPoint("TOPLEFT", f, "TOPLEFT", 15, -35)
+    warbandContent:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -15, 15)
+    f.warbandContent = warbandContent
+    
+    SetupWarbandLedgerContent(warbandContent, f)
+    
+    ledgerFrame = f
+    return f
+end
+
+function SetupWarbandLedgerContent(content, parent)
+    local Data = WarbandAccountant.Data
+    
+    local summaryText = content:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+    summaryText:SetPoint("TOPLEFT", 10, -10)
+    summaryText:SetText("Warband Bank Transaction History")
+    summaryText:SetTextColor(1, 0.82, 0)
+    
+    local clearBtn = CreateFrame("Button", nil, content, "UIPanelButtonTemplate")
+    clearBtn:SetSize(100, 22)
+    clearBtn:SetPoint("TOPRIGHT", -10, -8)
+    clearBtn:SetText("Clear History")
+    clearBtn:SetScript("OnClick", function() StaticPopup_Show("WARBANDACCOUNTANT_CLEAR_LEDGER") end)
+    
+    StaticPopupDialogs["WARBANDACCOUNTANT_CLEAR_LEDGER"] = {
+        text = "Clear all Warband ledger history?",
+        button1 = "Yes",
+        button2 = "No",
+        OnAccept = function() Data:ClearLedger(); UI:UpdateWarbandLedger() end,
+        timeout = 0,
+        whileDead = true,
+        hideOnEscape = true,
+    }
+    
+    local statsText = content:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    statsText:SetPoint("TOPLEFT", summaryText, "BOTTOMLEFT", 0, -10)
+    parent.warbandStatsText = statsText
+    
+    local separator = content:CreateTexture(nil, "ARTWORK")
+    separator:SetColorTexture(0.25, 0.25, 0.25, 0.8)
+    separator:SetHeight(1)
+    separator:SetPoint("TOPLEFT", content, "TOPLEFT", 0, -50)
+    separator:SetPoint("TOPRIGHT", content, "TOPRIGHT", 0, -50)
+    
+    local colTime = 15
+    local colChar = 120
+    local colType = 260
+    local colAmount = 400
+    local colBalance = 560
+    
+    local hTime = content:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    hTime:SetPoint("TOPLEFT", colTime, -60)
+    hTime:SetText("Time")
+    hTime:SetTextColor(0.8, 0.8, 0.8)
+    
+    local hChar = content:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    hChar:SetPoint("TOPLEFT", colChar, -60)
+    hChar:SetText("Character")
+    hChar:SetTextColor(0.8, 0.8, 0.8)
+    
+    local hType = content:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    hType:SetPoint("TOPLEFT", colType, -60)
+    hType:SetText("Type")
+    hType:SetTextColor(0.8, 0.8, 0.8)
+    
+    local hAmount = content:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    hAmount:SetPoint("TOPLEFT", colAmount, -60)
+    hAmount:SetText("Amount")
+    hAmount:SetTextColor(0.8, 0.8, 0.8)
+    
+    local hBalance = content:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    hBalance:SetPoint("TOPLEFT", colBalance, -60)
+    hBalance:SetText("Warband Bank")
+    hBalance:SetTextColor(0.8, 0.8, 0.8)
+    
+    local scrollFrame = CreateFrame("ScrollFrame", nil, content, "UIPanelScrollFrameTemplate")
+    scrollFrame:SetPoint("TOPLEFT", content, "TOPLEFT", 0, -80)
+    scrollFrame:SetPoint("BOTTOMRIGHT", content, "BOTTOMRIGHT", -26, 0)
+    
+    local scrollContent = CreateFrame("Frame")
+    scrollContent:SetWidth(800)
+    scrollFrame:SetScrollChild(scrollContent)
+    
+    parent.warbandScrollContent = scrollContent
+    parent.warbandScrollFrame = scrollFrame
+    parent.warbandRows = {}
+    
+    parent.ledgerColPos = {
+        time = colTime,
+        char = colChar,
+        type = colType,
+        amount = colAmount,
+        balance = colBalance
+    }
 end
 
 local function CreateMainWindow()
     local f = CreateFrame("Frame", "WarbandAccountantMainFrame", UIParent, "BasicFrameTemplateWithInset")
     f:SetSize(950, 480)
-    f:SetPoint("CENTER")
+    
+    local Data = WarbandAccountant.Data
+    local db = Data:GetDB()
+    db.framePositions = db.framePositions or {}
+    
+    if db.framePositions.main and db.framePositions.main.point then
+        f:SetPoint(db.framePositions.main.point, db.framePositions.main.x, db.framePositions.main.y)
+    else
+        f:SetPoint("CENTER", 0, 0)
+    end
+    
     f:SetMovable(true)
     f:EnableMouse(true)
     f:RegisterForDrag("LeftButton")
     f:SetScript("OnDragStart", f.StartMoving)
-    f:SetScript("OnDragStop", f.StopMovingOrSizing)
+    f:SetScript("OnDragStop", function(self)
+        self:StopMovingOrSizing()
+        local point, _, _, x, y = self:GetPoint(1)
+        db.framePositions.main = {point = point, x = x, y = y}
+    end)
+    
     f:SetFrameStrata("HIGH")
     f:EnableKeyboard(true)
     f:SetScript("OnKeyDown", function(self, key)
@@ -298,12 +496,6 @@ local function CreateMainWindow()
     targetsContent:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -15, 15)
     f.targetsContent = targetsContent
     
-    local ledgerContent = CreateFrame("Frame", nil, f)
-    ledgerContent:SetPoint("TOPLEFT", f, "TOPLEFT", 15, -35)
-    ledgerContent:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -15, 15)
-    ledgerContent:Hide()
-    f.ledgerContent = ledgerContent
-    
     local settingsContent = CreateFrame("Frame", nil, f)
     settingsContent:SetPoint("TOPLEFT", f, "TOPLEFT", 15, -35)
     settingsContent:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -15, 15)
@@ -311,22 +503,42 @@ local function CreateMainWindow()
     f.settingsContent = settingsContent
     
     SetupTargetsContent(targetsContent, f)
-    SetupLedgerContent(ledgerContent, f)
     SetupSettingsContent(settingsContent, f)
     
     f.targetsTab = CreateTab(f, "Targets", 1)
-    f.ledgerTab = CreateTab(f, "Ledger", 2)
-    f.settingsTab = CreateTab(f, "Settings", 3)
+    f.settingsTab = CreateTab(f, "Settings", 2)
     
-    f.tabs = {f.targetsTab, f.ledgerTab, f.settingsTab}
+    f.tabs = {f.targetsTab, f.settingsTab}
     
     f.targetsTab:SetPoint("TOPLEFT", f, "BOTTOMLEFT", 11, 4)
-    f.ledgerTab:SetPoint("LEFT", f.targetsTab, "RIGHT", -8, 0)
-    f.settingsTab:SetPoint("LEFT", f.ledgerTab, "RIGHT", -8, 0)
+    f.settingsTab:SetPoint("LEFT", f.targetsTab, "RIGHT", -8, 0)
     
     f.targetsTab:SetActive(true)
-    f.ledgerTab:SetActive(false)
     f.settingsTab:SetActive(false)
+    
+    f.targetsTab:SetScript("OnClick", function(self)
+        for _, t in ipairs(f.tabs or {}) do
+            t:SetActive(false)
+        end
+        self:SetActive(true)
+        f.selectedTab = 1
+        
+        f.targetsContent:Show()
+        f.settingsContent:Hide()
+        
+        UI:UpdateTargets()
+    end)
+    
+    f.settingsTab:SetScript("OnClick", function(self)
+        for _, t in ipairs(f.tabs or {}) do
+            t:SetActive(false)
+        end
+        self:SetActive(true)
+        f.selectedTab = 2
+        
+        f.targetsContent:Hide()
+        f.settingsContent:Show()
+    end)
     
     mainFrame = f
     return f
@@ -335,19 +547,16 @@ end
 function SetupSettingsContent(content, parent)
     local Data = WarbandAccountant.Data
     
-    -- Main Title
     local title = content:CreateFontString(nil, "OVERLAY", "GameFontNormalHuge")
     title:SetPoint("TOP", 0, -15)
     title:SetText("Settings")
     title:SetTextColor(1, 0.82, 0)
     
-    -- Subtitle
     local subtitle = content:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
     subtitle:SetPoint("TOP", title, "BOTTOM", 0, -5)
     subtitle:SetText("Configure default values and display preferences")
     subtitle:SetTextColor(0.7, 0.7, 0.7)
     
-    -- Section 1: Default Target Amounts
     local targetSection = CreateFrame("Frame", nil, content, "BackdropTemplate")
     targetSection:SetSize(420, 160)
     targetSection:SetPoint("TOP", subtitle, "BOTTOM", 0, -20)
@@ -406,7 +615,6 @@ function SetupSettingsContent(content, parent)
             Data:SetDefaultTarget(charType, goldValue * 10000)
         end)
         
-        -- Tooltip
         editBox:SetScript("OnEnter", function(self)
             GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
             GameTooltip:SetText("Default: " .. (currentGold > 0 and currentGold or 0) .. " gold")
@@ -419,7 +627,6 @@ function SetupSettingsContent(content, parent)
     CreateTargetInput(targetSection, "Main Alt:", "mainAlt", -75)
     CreateTargetInput(targetSection, "Alt:", "alt", -105)
     
-    -- Section 2: Display Options
     local displaySection = CreateFrame("Frame", nil, content, "BackdropTemplate")
     displaySection:SetSize(420, 120)
     displaySection:SetPoint("TOP", targetSection, "BOTTOM", 0, -15)
@@ -444,7 +651,6 @@ function SetupSettingsContent(content, parent)
     displayDesc:SetText("Customize how characters are organized in the Targets tab")
     displayDesc:SetTextColor(0.6, 0.6, 0.6)
     
-    -- Sort Mode Label
     local sortLabel = displaySection:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     sortLabel:SetPoint("TOPLEFT", 20, -55)
     sortLabel:SetText("Sort Mode:")
@@ -485,7 +691,6 @@ function SetupSettingsContent(content, parent)
         UIDropDownMenu_AddButton(info)
     end)
     
-    -- Info footer note
     local infoText = content:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     infoText:SetPoint("TOP", displaySection, "BOTTOM", 0, -15)
     infoText:SetText("Note: Default targets apply to new character classifications only.\nUse the Targets tab to assign types to individual characters.")
@@ -577,84 +782,6 @@ function SetupTargetsContent(content, parent)
     }
 end
 
-function SetupLedgerContent(content, parent)
-    local Data = WarbandAccountant.Data
-    
-    local summaryText = content:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-    summaryText:SetPoint("TOPLEFT", 10, -10)
-    summaryText:SetText("Transaction History")
-    summaryText:SetTextColor(1, 0.82, 0)
-    
-    local clearBtn = CreateFrame("Button", nil, content, "UIPanelButtonTemplate")
-    clearBtn:SetSize(100, 22)
-    clearBtn:SetPoint("TOPRIGHT", -10, -8)
-    clearBtn:SetText("Clear History")
-    clearBtn:SetScript("OnClick", function() StaticPopup_Show("WARBANDACCOUNTANT_CLEAR_LEDGER") end)
-    
-    StaticPopupDialogs["WARBANDACCOUNTANT_CLEAR_LEDGER"] = {
-        text = "Clear all ledger history?",
-        button1 = "Yes",
-        button2 = "No",
-        OnAccept = function() Data:ClearLedger(); UI:UpdateLedger() end,
-        timeout = 0,
-        whileDead = true,
-        hideOnEscape = true,
-    }
-    
-    local statsText = content:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    statsText:SetPoint("TOPLEFT", summaryText, "BOTTOMLEFT", 0, -10)
-    parent.ledgerStatsText = statsText
-    
-    local separator = content:CreateTexture(nil, "ARTWORK")
-    separator:SetColorTexture(0.25, 0.25, 0.25, 0.8)
-    separator:SetHeight(1)
-    separator:SetPoint("TOPLEFT", content, "TOPLEFT", 0, -50)
-    separator:SetPoint("TOPRIGHT", content, "TOPRIGHT", 0, -50)
-    
-    local colTime = 10
-    local colChar = 100
-    local colType = 200
-    local colAmount = 300
-    local colBalance = 420
-    
-    local hTime = content:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    hTime:SetPoint("TOPLEFT", colTime, -60)
-    hTime:SetText("Time")
-    hTime:SetTextColor(0.8, 0.8, 0.8)
-    
-    local hChar = content:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    hChar:SetPoint("TOPLEFT", colChar, -60)
-    hChar:SetText("Character")
-    hChar:SetTextColor(0.8, 0.8, 0.8)
-    
-    local hType = content:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    hType:SetPoint("TOPLEFT", colType, -60)
-    hType:SetText("Type")
-    hType:SetTextColor(0.8, 0.8, 0.8)
-    
-    local hAmount = content:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    hAmount:SetPoint("TOPLEFT", colAmount, -60)
-    hAmount:SetText("Amount")
-    hAmount:SetTextColor(0.8, 0.8, 0.8)
-    
-    local hBalance = content:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    hBalance:SetPoint("TOPLEFT", colBalance, -60)
-    hBalance:SetText("Warband Bank")
-    hBalance:SetTextColor(0.8, 0.8, 0.8)
-    
-    local scrollFrame = CreateFrame("ScrollFrame", nil, content, "UIPanelScrollFrameTemplate")
-    scrollFrame:SetPoint("TOPLEFT", content, "TOPLEFT", 0, -80)
-    scrollFrame:SetPoint("BOTTOMRIGHT", content, "BOTTOMRIGHT", -26, 0)
-    
-    local scrollContent = CreateFrame("Frame")
-    scrollContent:SetWidth(650)
-    scrollFrame:SetScrollChild(scrollContent)
-    
-    parent.ledgerScrollContent = scrollContent
-    parent.ledgerScrollFrame = scrollFrame
-    parent.ledgerRows = {}
-end
-
 function UI:UpdateTargets()
     if not mainFrame then return end
     local Data = WarbandAccountant.Data
@@ -701,7 +828,6 @@ function UI:UpdateTargets()
         row:SetScript("OnLeave", function(self) self.highlight:Hide() end)
         
         if sortMode == "arrow" then
-            -- Up arrow button
             local upBtn = CreateFrame("Button", nil, row)
             upBtn:SetSize(16, 16)
             upBtn:SetPoint("LEFT", colPos.reorder, 8)
@@ -744,7 +870,6 @@ function UI:UpdateTargets()
                 upBtn:Disable()
             end
             
-            -- Down arrow button
             local downBtn = CreateFrame("Button", nil, row)
             downBtn:SetSize(16, 16)
             downBtn:SetPoint("TOP", upBtn, "BOTTOM", 0, 2)
@@ -787,7 +912,6 @@ function UI:UpdateTargets()
                 downBtn:Disable()
             end
         else
-            -- Number input mode
             local orderEdit = CreateFrame("EditBox", nil, row, "InputBoxTemplate")
             orderEdit:SetSize(36, 22)
             orderEdit:SetPoint("LEFT", colPos.reorder, 0)
@@ -949,19 +1073,26 @@ function UI:UpdateTargets()
     end
 end
 
-function UI:UpdateLedger()
-    if not mainFrame or not mainFrame.ledgerScrollContent then return end
+function UI:UpdateWarbandLedger()
+    if not ledgerFrame or not ledgerFrame.warbandScrollContent then return end
     local Data = WarbandAccountant.Data
-    local content = mainFrame.ledgerScrollContent
+    local content = ledgerFrame.warbandScrollContent
     local entries = Data:GetLedgerEntries(100)
+    local colPos = ledgerFrame.ledgerColPos or {
+        time = 15,
+        char = 120,
+        type = 260,
+        amount = 400,
+        balance = 560
+    }
     
-    for _, row in ipairs(mainFrame.ledgerRows or {}) do if row then row:Hide() end end
-    wipe(mainFrame.ledgerRows or {})
-    mainFrame.ledgerRows = mainFrame.ledgerRows or {}
+    for _, row in ipairs(ledgerFrame.warbandRows or {}) do if row then row:Hide() end end
+    wipe(ledgerFrame.warbandRows or {})
+    ledgerFrame.warbandRows = ledgerFrame.warbandRows or {}
     
-    if mainFrame.ledgerEmptyText then
-        mainFrame.ledgerEmptyText:Hide()
-        mainFrame.ledgerEmptyText = nil
+    if ledgerFrame.warbandEmptyText then
+        ledgerFrame.warbandEmptyText:Hide()
+        ledgerFrame.warbandEmptyText = nil
     end
     
     local totalDeposited, totalWithdrawn = Data:GetTotalLedgerStats()
@@ -979,7 +1110,7 @@ function UI:UpdateLedger()
         madePrefix = ""
     end
     
-    mainFrame.ledgerStatsText:SetText(string.format("Deposited: |cFF00FF00%s|r  |  Withdrawn: |cFFFF0000%s|r  |  Made: %s%s%s|r",
+    ledgerFrame.warbandStatsText:SetText(string.format("Deposited: |cFF00FF00%s|r  |  Withdrawn: |cFFFF0000%s|r  |  Made: %s%s%s|r",
         WarbandAccountant.FormatGold(totalDeposited), 
         WarbandAccountant.FormatGold(totalWithdrawn),
         madeColor,
@@ -992,21 +1123,16 @@ function UI:UpdateLedger()
         emptyText:SetText("No transactions recorded yet.\nOpen your Warband Bank to record transfers.")
         emptyText:SetJustifyH("CENTER")
         content:SetHeight(400)
-        mainFrame.ledgerEmptyText = emptyText
+        ledgerFrame.warbandEmptyText = emptyText
         return
     end
     
     local rowHeight = 24
     local yOffset = 0
-    local colTime = 10
-    local colChar = 100
-    local colType = 200
-    local colAmount = 300
-    local colBalance = 420
     
     for i, entry in ipairs(entries) do
         local row = CreateFrame("Frame", nil, content)
-        row:SetSize(650, rowHeight)
+        row:SetSize(800, rowHeight)
         row:SetPoint("TOPLEFT", 0, yOffset)
         
         if i % 2 == 0 then
@@ -1016,18 +1142,18 @@ function UI:UpdateLedger()
         end
         
         local timeText = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-        timeText:SetPoint("LEFT", colTime, 0)
+        timeText:SetPoint("LEFT", colPos.time, 0)
         timeText:SetText(FormatTimestamp(entry.timestamp))
         timeText:SetTextColor(0.7, 0.7, 0.7)
         
         local charText = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-        charText:SetPoint("LEFT", colChar, 0)
+        charText:SetPoint("LEFT", colPos.char, 0)
         charText:SetText(entry.characterName or "Unknown")
-        charText:SetWidth(90)
+        charText:SetWidth(120)
         charText:SetJustifyH("LEFT")
         
         local typeText = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-        typeText:SetPoint("LEFT", colType, 0)
+        typeText:SetPoint("LEFT", colPos.type, 0)
         if entry.type == "DEPOSIT" or entry.type == "MANUAL_DEPOSIT" then
             typeText:SetText("Deposit")
             typeText:SetTextColor(0, 1, 0)
@@ -1037,17 +1163,17 @@ function UI:UpdateLedger()
         end
         
         local amountText = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-        amountText:SetPoint("LEFT", colAmount, 0)
+        amountText:SetPoint("LEFT", colPos.amount, 0)
         amountText:SetText(WarbandAccountant.FormatGold(entry.amount))
         amountText:SetJustifyH("RIGHT")
         
         local balanceText = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-        balanceText:SetPoint("LEFT", colBalance, 0)
+        balanceText:SetPoint("LEFT", colPos.balance, 0)
         balanceText:SetText(WarbandAccountant.FormatGold(entry.balanceAfter))
         balanceText:SetTextColor(1, 0.82, 0)
         balanceText:SetJustifyH("RIGHT")
         
-        table.insert(mainFrame.ledgerRows, row)
+        table.insert(ledgerFrame.warbandRows, row)
         yOffset = yOffset - rowHeight
     end
     
@@ -1056,6 +1182,37 @@ end
 
 function UI:ToggleMainWindow()
     if not mainFrame then mainFrame = CreateMainWindow() end
-    if mainFrame:IsShown() then mainFrame:Hide()
-    else self:UpdateTargets(); if mainFrame.selectedTab == 2 then self:UpdateLedger() end; mainFrame:Show() end
+    if mainFrame:IsShown() then 
+        mainFrame:Hide()
+    else 
+        self:UpdateTargets()
+        mainFrame:Show() 
+    end
+end
+
+function UI:ToggleLedgerWindow()
+    if not ledgerFrame then ledgerFrame = CreateLedgerWindow() end
+    if ledgerFrame:IsShown() then 
+        ledgerFrame:Hide()
+    else 
+        self:UpdateWarbandLedger()
+        ledgerFrame:Show() 
+    end
+end
+
+function UI:ResetFramePositions()
+    local Data = WarbandAccountant.Data
+    local db = Data:GetDB()
+    if db then
+        db.framePositions = nil
+    end
+    if mainFrame then
+        mainFrame:ClearAllPoints()
+        mainFrame:SetPoint("CENTER", 0, 0)
+    end
+    if ledgerFrame then
+        ledgerFrame:ClearAllPoints()
+        ledgerFrame:SetPoint("CENTER", 0, 0)
+    end
+    print("|cFF00FF00Warband Accountant:|r Window positions reset to center")
 end

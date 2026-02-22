@@ -29,7 +29,6 @@ function Data:Init()
     db.global.confirmTransfers = db.global.confirmTransfers or false
     db.global.sortMode = db.global.sortMode or "arrow"
     
-    -- NEW: Running totals for ledger (persist beyond 500 entries)
     db.global.totalDeposited = db.global.totalDeposited or 0
     db.global.totalWithdrawn = db.global.totalWithdrawn or 0
     
@@ -47,6 +46,16 @@ function Data:Init()
     
     db.characters = db.characters or {}
     db.ledger = db.ledger or {}
+    
+    db.guildLedger = db.guildLedger or {}
+    db.guildSettings = db.guildSettings or {
+        lastScan = 0,
+        totalGuildDeposited = 0,
+        totalGuildWithdrawn = 0
+    }
+    
+    db.guildMasterCache = db.guildMasterCache or {}
+    db.guildBankData = db.guildBankData or {}
     
     local charCount = 0
     for _ in pairs(db.characters) do charCount = charCount + 1 end
@@ -283,7 +292,6 @@ function Data:AddLedgerEntry(entry)
     if not db then return end
     db.ledger = db.ledger or {}
     
-    -- Add to ledger (with 500 limit for display)
     table.insert(db.ledger, 1, {
         timestamp = time(),
         character = entry.character or GetCharacterFullName(),
@@ -295,14 +303,12 @@ function Data:AddLedgerEntry(entry)
         note = entry.note or ""
     })
     
-    -- Keep only last 500 for display
     if #db.ledger > 500 then
         for i = 501, #db.ledger do
             db.ledger[i] = nil
         end
     end
     
-    -- NEW: Update running totals (these persist forever)
     if entry.type == "DEPOSIT" or entry.type == "MANUAL_DEPOSIT" then
         db.global.totalDeposited = (db.global.totalDeposited or 0) + (entry.amount or 0)
     elseif entry.type == "WITHDRAW" or entry.type == "MANUAL_WITHDRAW" then
@@ -321,17 +327,12 @@ function Data:GetLedgerEntries(limit)
 end
 
 function Data:GetTotalLedgerStats()
-    -- Use stored running totals instead of calculating from pruned array
     if not db or not db.global then return 0, 0 end
-    
     return db.global.totalDeposited or 0, db.global.totalWithdrawn or 0
 end
 
 function Data:ClearLedger()
     db.ledger = {}
-    -- Optionally reset totals too? Uncomment if desired:
-    -- db.global.totalDeposited = 0
-    -- db.global.totalWithdrawn = 0
 end
 
 function Data:ResetLedgerTotals()
@@ -373,4 +374,118 @@ end
 function Data:SetSortMode(mode)
     if not db or not db.global then return end
     db.global.sortMode = mode
+end
+
+function Data:IsGuildMaster()
+    local charID = GetCharacterFullName()
+    
+    if not db.guildMasterCache then
+        db.guildMasterCache = {}
+    end
+    
+    if db.guildMasterCache[charID] == false then
+        return false
+    end
+    
+    if db.guildMasterCache[charID] == true then
+        local isStillGM = IsGuildLeader()
+        if not isStillGM then
+            db.guildMasterCache[charID] = false
+        end
+        return isStillGM
+    end
+    
+    local isGM = IsGuildLeader()
+    db.guildMasterCache[charID] = isGM
+    
+    return isGM
+end
+
+function Data:ResetGuildMasterCache()
+    if db then
+        db.guildMasterCache = {}
+    end
+end
+
+function Data:GetGuildBankData(guildName)
+    if not db or not db.guildBankData then return nil end
+    return db.guildBankData[guildName]
+end
+
+function Data:SetGuildBankData(guildName, goldAmount)
+    if not db then return end
+    db.guildBankData = db.guildBankData or {}
+    db.guildBankData[guildName] = {
+        gold = goldAmount,
+        lastUpdate = time(),
+        realm = GetRealmName()
+    }
+end
+
+function Data:ClearGuildBankData(guildName)
+    if not db or not db.guildBankData then return end
+    if guildName then
+        db.guildBankData[guildName] = nil
+    else
+        db.guildBankData = {}
+    end
+end
+
+function Data:AddGuildLedgerEntry(entry)
+    if not db or not self:IsGuildMaster() then return end
+    db.guildLedger = db.guildLedger or {}
+    
+    table.insert(db.guildLedger, 1, {
+        timestamp = time(),
+        player = entry.player or "Unknown",
+        amount = entry.amount or 0,
+        type = entry.type,
+        years = entry.years or 0,
+        months = entry.months or 0,
+        days = entry.days or 0,
+        hours = entry.hours or 0,
+        note = entry.note or ""
+    })
+    
+    if #db.guildLedger > 500 then
+        for i = 501, #db.guildLedger do
+            db.guildLedger[i] = nil
+        end
+    end
+    
+    if entry.type == "deposit" then
+        db.guildSettings.totalGuildDeposited = (db.guildSettings.totalGuildDeposited or 0) + (entry.amount or 0)
+    elseif entry.type == "withdraw" then
+        db.guildSettings.totalGuildWithdrawn = (db.guildSettings.totalGuildWithdrawn or 0) + (entry.amount or 0)
+    end
+    
+    db.guildSettings.lastScan = time()
+end
+
+function Data:GetGuildLedgerEntries(limit)
+    if not db or not db.guildLedger then return {} end
+    limit = limit or 50
+    local entries = {}
+    for i = 1, math.min(limit, #db.guildLedger) do
+        table.insert(entries, db.guildLedger[i])
+    end
+    return entries
+end
+
+function Data:GetGuildLedgerStats()
+    if not db or not db.guildSettings then return 0, 0, 0 end
+    return db.guildSettings.totalGuildDeposited or 0, 
+           db.guildSettings.totalGuildWithdrawn or 0,
+           db.guildSettings.lastScan or 0
+end
+
+function Data:ClearGuildLedger()
+    if not self:IsGuildMaster() then return end
+    db.guildLedger = {}
+    db.guildSettings.totalGuildDeposited = 0
+    db.guildSettings.totalGuildWithdrawn = 0
+end
+
+function Data:ShouldShowGuildBankFeatures()
+    return self:IsGuildMaster()
 end
