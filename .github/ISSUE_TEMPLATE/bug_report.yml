@@ -1,0 +1,21 @@
+name: Bug Report
+description: Report a bug or issue
+assignees:
+  - I-AM-T3X
+
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: Describe the issue
+      description: Clearly describe what the issue is.
+    validations:
+      required: true
+
+  - type: textarea
+    id: stacktrace
+    attributes:
+      label: Error Log (if applicable)
+      description: Paste any relevant error logs.
+    validations:
+      required: false
