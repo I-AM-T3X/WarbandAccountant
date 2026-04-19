@@ -30,7 +30,7 @@ function SettingsModule:CreateBlizzardSettings()
     
     local version = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     version:SetPoint("TOP", subtitle, "BOTTOM", 0, -5)
-    version:SetText("Version: 1.0.1")
+    version:SetText("Version: 1.0.3")
     version:SetTextColor(0.5, 0.5, 0.5)
     
     local featuresHeader = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")

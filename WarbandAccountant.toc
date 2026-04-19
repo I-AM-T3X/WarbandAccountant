@@ -1,8 +1,8 @@
-## Interface: 120000
+## Interface: 120001, 120005
 ## Title: Warband Accountant
 ## Notes: Automated Warband gold management with per-character targets
 ## Author: I_AM_T3X
-## Version: 1.0.2
+## Version: 1.0.3
 ## SavedVariables: WarbandAccountantDB
 
 # Libraries
