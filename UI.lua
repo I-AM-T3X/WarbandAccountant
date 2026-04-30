@@ -708,6 +708,7 @@ function SetupTargetsContent(content, parent)
     local colTarget = 480
     local colCurrent = 610
     local colPaused = 745
+    local colDelete = 820
     
     local headerY = -10
     
@@ -751,6 +752,11 @@ function SetupTargetsContent(content, parent)
     headerPaused:SetText("Pause")
     headerPaused:SetTextColor(1, 0.82, 0)
     
+    local headerDelete = content:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    headerDelete:SetPoint("TOPLEFT", colDelete, headerY)
+    headerDelete:SetText("Delete")
+    headerDelete:SetTextColor(1, 0.82, 0)
+    
     local separator = content:CreateTexture(nil, "ARTWORK")
     separator:SetColorTexture(0.25, 0.25, 0.25, 0.8)
     separator:SetHeight(1)
@@ -762,7 +768,7 @@ function SetupTargetsContent(content, parent)
     scrollFrame:SetPoint("BOTTOMRIGHT", content, "BOTTOMRIGHT", -26, 0)
     
     local scrollContent = CreateFrame("Frame")
-    scrollContent:SetWidth(900)
+    scrollContent:SetWidth(920)
     scrollFrame:SetScrollChild(scrollContent)
     
     parent.targetsScrollContent = scrollContent
@@ -778,7 +784,8 @@ function SetupTargetsContent(content, parent)
         alt = colAlt,
         target = colTarget,
         current = colCurrent,
-        paused = colPaused
+        paused = colPaused,
+        delete = colDelete
     }
 end
 
@@ -1059,6 +1066,40 @@ function UI:UpdateTargets()
         end)
         pauseCheck:SetScript("OnLeave", function() GameTooltip:Hide() end)
         
+        -- Add delete button
+        local Data = WarbandAccountant.Data
+        local currentCharID = Data:GetCurrentCharacterID()
+        
+        -- Only show delete button if this is NOT the current character
+        if char.id ~= currentCharID then
+            local deleteBtn = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
+            deleteBtn:SetSize(50, 22)
+            deleteBtn:SetPoint("LEFT", colPos.delete, 0)
+            deleteBtn:SetText("Delete")
+            
+            -- Make the button red
+            local regions = {deleteBtn:GetRegions()}
+            for _, region in ipairs(regions) do
+                if region:GetObjectType() == "Texture" then
+                    region:SetVertexColor(0.8, 0.1, 0.1, 1)
+                end
+            end
+            
+            deleteBtn:SetScript("OnClick", function(self)
+                StaticPopup_Show("WARBANDACCOUNTANT_DELETE_CHARACTER", char.name, nil, char.id)
+            end)
+            
+            deleteBtn:SetScript("OnEnter", function(self)
+                GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+                GameTooltip:SetText("Delete Character")
+                GameTooltip:AddLine("Remove this character from tracking", 1, 1, 1, true)
+                GameTooltip:AddLine("|cFFFF0000This cannot be undone!|r", 1, 0, 0, true)
+                GameTooltip:Show()
+            end)
+            
+            deleteBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
+        end
+        
         table.insert(mainFrame.targetRows, row)
         yOffset = yOffset - rowHeight
     end
@@ -1215,4 +1256,52 @@ function UI:ResetFramePositions()
         ledgerFrame:SetPoint("CENTER", 0, 0)
     end
     print("|cFF00FF00Warband Accountant:|r Window positions reset to center")
+end
+
+function UI:RefreshTargetsTab()
+    self:UpdateTargets()
+end
+
+-- Delete character confirmation dialog
+StaticPopupDialogs["WARBANDACCOUNTANT_DELETE_CHARACTER"] = {
+    text = "Delete %s from Warband Accountant?\n\nThis will remove all tracking data for this character.\n\n|cFFFF0000This cannot be undone!|r",
+    button1 = "Delete",
+    button2 = "Cancel",
+    OnAccept = function(self, charID)
+        local Data = WarbandAccountant.Data
+        local success, result = Data:DeleteCharacter(charID)
+        if success then
+            print("|cFF00FF00Warband Accountant:|r Deleted character: " .. result)
+            UI:RefreshTargetsTab()
+            UI:UpdateTooltip()
+        else
+            print("|cFFFF0000Warband Accountant:|r " .. (result or "Could not delete character"))
+        end
+    end,
+    timeout = 0,
+    whileDead = true,
+    hideOnEscape = true,
+    preferredIndex = 3,
+}
+
+-- Update notification dialog
+StaticPopupDialogs["WARBANDACCOUNTANT_UPDATE_NOTIFICATION"] = {
+    text = "|cFFFFD700Warband Accountant v1.0.4|r\n\n|cFF00FF00NEW FEATURE:|r Character Deletion\n\nYou can now delete ghost/old characters!\n\n• Click the red |cFFFF0000Delete|r button in the Targets tab\n• Or use |cFFFFFFFF/wba delete CharacterName|r\n\nPerfect for cleaning up after character renames!\n\nType |cFFFFFFFF/wba help|r for all commands.",
+    button1 = "Got it!",
+    timeout = 0,
+    whileDead = true,
+    hideOnEscape = true,
+    preferredIndex = 3,
+}
+
+function UI:CheckAndShowUpdateNotification()
+    local Data = WarbandAccountant.Data
+    local lastSeenVersion = Data:GetLastSeenVersion()
+    local currentVersion = Data:GetCurrentAddonVersion()
+    
+    -- Show notification if this is a new version
+    if lastSeenVersion ~= currentVersion then
+        StaticPopup_Show("WARBANDACCOUNTANT_UPDATE_NOTIFICATION")
+        Data:SetLastSeenVersion(currentVersion)
+    end
 end

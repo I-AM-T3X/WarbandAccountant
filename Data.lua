@@ -5,6 +5,7 @@ WarbandAccountant.Data = Data
 
 local DEFAULT_TARGET = 1000000
 local CURRENT_DB_VERSION = 1
+local CURRENT_ADDON_VERSION = "1.0.4"
 
 local db = nil
 local sessionData = {}
@@ -43,6 +44,7 @@ function Data:Init()
     
     db.global.minimapPos = db.global.minimapPos or 195
     db.global.hide = db.global.hide or false
+    db.global.lastSeenVersion = db.global.lastSeenVersion or "0.0.0"
     
     db.characters = db.characters or {}
     db.ledger = db.ledger or {}
@@ -488,4 +490,44 @@ end
 
 function Data:ShouldShowGuildBankFeatures()
     return self:IsGuildMaster()
+end
+
+function Data:GetCurrentAddonVersion()
+    return CURRENT_ADDON_VERSION
+end
+
+function Data:GetLastSeenVersion()
+    if not db or not db.global then return "0.0.0" end
+    return db.global.lastSeenVersion or "0.0.0"
+end
+
+function Data:SetLastSeenVersion(version)
+    if db and db.global then
+        db.global.lastSeenVersion = version
+    end
+end
+
+function Data:DeleteCharacter(charID)
+    if not db or not db.characters then return false, "Database not initialized" end
+    
+    -- Don't allow deleting the current character
+    if charID == GetCharacterFullName() then
+        return false, "Cannot delete current character"
+    end
+    
+    -- Check if character exists
+    if not db.characters[charID] then
+        return false, "Character not found: " .. charID
+    end
+    
+    -- Delete the character
+    local charName = db.characters[charID].name or "Unknown"
+    db.characters[charID] = nil
+    
+    -- Clear any session data
+    if sessionData[charID] then
+        sessionData[charID] = nil
+    end
+    
+    return true, charName
 end

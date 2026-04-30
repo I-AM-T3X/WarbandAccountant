@@ -30,7 +30,7 @@ function SettingsModule:CreateBlizzardSettings()
     
     local version = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     version:SetPoint("TOP", subtitle, "BOTTOM", 0, -5)
-    version:SetText("Version: 1.0.3")
+    version:SetText("Version: 1.0.4")
     version:SetTextColor(0.5, 0.5, 0.5)
     
     local featuresHeader = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
@@ -161,7 +161,9 @@ SlashCmdList["WARBANDACCOUNTANT"] = function(msg)
         print("  /wba config - Open settings")
         print("  /wba toggle - Toggle main window")
         print("  /wba process - Force process transfers")
+        print("  /wba delete <name> - Delete a character (e.g., /wba delete OldName)")
         print("  /wba resetgm - Reset Guild Master cache (if promoted)")
+        print("  /wba clearguild - Clear guild bank data")
     elseif msg == "config" then
         SettingsModule:OpenSettings()
     elseif msg == "toggle" then
@@ -173,7 +175,24 @@ SlashCmdList["WARBANDACCOUNTANT"] = function(msg)
         print("|cFF00FF00Warband Accountant:|r Guild Master cache cleared. Will check again on next tooltip.")
 	elseif msg == "clearguild" then
         WarbandAccountant.Data:ClearGuildBankData()
-        print("|cFF00FF00Warband Accountant:|r Guild bank data cleared.")	
+        print("|cFF00FF00Warband Accountant:|r Guild bank data cleared.")
+    elseif msg:match("^delete ") then
+        local charName = msg:match("^delete (.+)$")
+        if charName then
+            local realm = GetRealmName()
+            local charID = charName .. "-" .. realm
+            local success, result = WarbandAccountant.Data:DeleteCharacter(charID)
+            if success then
+                print("|cFF00FF00Warband Accountant:|r Deleted character: " .. result)
+                if WarbandAccountant.UI.RefreshTargetsTab then
+                    WarbandAccountant.UI:RefreshTargetsTab()
+                end
+            else
+                print("|cFFFF0000Warband Accountant:|r " .. (result or "Could not delete character"))
+            end
+        else
+            print("|cFFFF0000Warband Accountant:|r Usage: /wba delete CharacterName")
+        end	
     else
         print("|cFFFF0000Warband Accountant:|r Unknown command. Type /wba help")
     end

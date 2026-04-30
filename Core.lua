@@ -217,6 +217,11 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
             WarbandAccountant.UI:UpdateTooltip()
         end)
         
+        -- Show update notification if needed
+        C_Timer.After(3, function()
+            WarbandAccountant.UI:CheckAndShowUpdateNotification()
+        end)
+        
     elseif event == "PLAYER_MONEY" then
         WarbandAccountant.Data:UpdateCharacterGold()
         WarbandAccountant.UI:UpdateTooltip()
