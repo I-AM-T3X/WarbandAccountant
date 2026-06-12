@@ -23,6 +23,7 @@ local pendingAutoAmount = 0
 local pendingAutoType = nil
 local lastWarbandBalance = 0
 local guildBankOpen = false
+local mailSessionStart = nil   -- gold snapshot when mail opens
 
 local function GetWarbandGold()
     return C_Bank.FetchDepositedMoney(Enum.BankType.Account) or 0
@@ -203,6 +204,8 @@ eventFrame:RegisterEvent("ACCOUNT_MONEY")
 eventFrame:RegisterEvent("GUILDBANKFRAME_OPENED")
 eventFrame:RegisterEvent("GUILDBANKFRAME_CLOSED")
 eventFrame:RegisterEvent("GUILDBANK_UPDATE_MONEY")
+eventFrame:RegisterEvent("MAIL_SHOW")
+eventFrame:RegisterEvent("MAIL_CLOSED")
 
 eventFrame:SetScript("OnEvent", function(self, event, ...)
     if event == "PLAYER_LOGIN" then
@@ -295,6 +298,23 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
         -- Update immediately when money changes
         if guildBankOpen then
             Core:UpdateGuildBankData()
+        end
+        
+    elseif event == "MAIL_SHOW" then
+        -- Snapshot gold when mail opens so we can detect gold received from mail
+        mailSessionStart = GetMoney()
+        
+    elseif event == "MAIL_CLOSED" then
+        if mailSessionStart then
+            local goldAfter = GetMoney()
+            local mailGold = goldAfter - mailSessionStart
+            if mailGold > 0 then
+                -- Gold came in from mail; PLAYER_MONEY already fired to update
+                -- UpdateCharacterGold. Weekly income is recalculated on-demand
+                -- from the ledger so nothing extra needed here.
+                WarbandAccountant.UI:UpdateTooltip()
+            end
+            mailSessionStart = nil
         end
     end
 end)

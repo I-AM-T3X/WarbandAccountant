@@ -7,6 +7,7 @@ WarbandAccountant.UI = UI
 local mainFrame = nil
 local ledgerFrame = nil
 local minimapLDB = nil
+local ledgerCharFilter = nil  -- nil = show all, or charID string to filter
 
 local hasLibDBIcon = LibStub and LibStub("LibDBIcon-1.0", true)
 local hasLDB = LibStub and LibStub("LibDataBroker-1.1", true)
@@ -95,6 +96,13 @@ local function SetupTooltip(tooltip)
         local color = totalSession > 0 and "|cFF00FF00" or "|cFFFF0000"
         local sign = totalSession > 0 and "+" or ""
         tooltip:AddDoubleLine("Total Session:", color .. sign .. WarbandAccountant.FormatGold(totalSession) .. "|r", 0.8, 0.8, 0.8, 1, 1, 1)
+    end
+    
+    local weeklyIncome = Data:GetWeeklyIncome()
+    do
+        local wColor = weeklyIncome > 0 and "|cFF00FF00" or (weeklyIncome < 0 and "|cFFFF0000" or "|cFFFFFFFF")
+        local wSign  = weeklyIncome > 0 and "+" or ""
+        tooltip:AddDoubleLine("This Week:", wColor .. wSign .. WarbandAccountant.FormatGold(weeklyIncome) .. "|r", 0.8, 0.8, 0.8, 1, 1, 1)
     end
     
     tooltip:AddLine(" ")
@@ -314,7 +322,7 @@ end
 
 local function CreateLedgerWindow()
     local f = CreateFrame("Frame", "WarbandAccountantLedgerFrame", UIParent, "BasicFrameTemplateWithInset")
-    f:SetSize(850, 520)
+    f:SetSize(1020, 610)
     
     local Data = WarbandAccountant.Data
     local db = Data:GetDB()
@@ -372,9 +380,21 @@ function SetupWarbandLedgerContent(content, parent)
     summaryText:SetText("Warband Bank Transaction History")
     summaryText:SetTextColor(1, 0.82, 0)
     
+    -- Filter dropdown — top right corner
+    local filterDropdown = CreateFrame("Frame", "WarbandAccountantLedgerFilterDropdown", content, "UIDropDownMenuTemplate")
+    filterDropdown:SetPoint("TOPRIGHT", content, "TOPRIGHT", 16, -2)
+    UIDropDownMenu_SetWidth(filterDropdown, 160)
+    UIDropDownMenu_SetText(filterDropdown, "All Characters")
+    
+    local filterLabel = content:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    filterLabel:SetPoint("RIGHT", filterDropdown, "LEFT", 16, 1)
+    filterLabel:SetText("Filter:")
+    filterLabel:SetTextColor(0.7, 0.7, 0.7)
+    
+    -- Clear History — below the dropdown
     local clearBtn = CreateFrame("Button", nil, content, "UIPanelButtonTemplate")
     clearBtn:SetSize(100, 22)
-    clearBtn:SetPoint("TOPRIGHT", -10, -8)
+    clearBtn:SetPoint("TOPRIGHT", filterDropdown, "BOTTOMRIGHT", -18, 2)
     clearBtn:SetText("Clear History")
     clearBtn:SetScript("OnClick", function() StaticPopup_Show("WARBANDACCOUNTANT_CLEAR_LEDGER") end)
     
@@ -388,53 +408,101 @@ function SetupWarbandLedgerContent(content, parent)
         hideOnEscape = true,
     }
     
+    local function RefreshFilterDropdown()
+        UIDropDownMenu_Initialize(filterDropdown, function(self, level)
+            local info = UIDropDownMenu_CreateInfo()
+            
+            info.text    = "All Characters"
+            info.arg1    = nil
+            info.checked = (ledgerCharFilter == nil)
+            info.func    = function(btn, arg1)
+                ledgerCharFilter = nil
+                UIDropDownMenu_SetText(filterDropdown, "All Characters")
+                UI:UpdateWarbandLedger()
+            end
+            UIDropDownMenu_AddButton(info)
+            
+            local characters = Data:GetAllCharacters()
+            local charList = {}
+            for id, charData in pairs(characters) do
+                table.insert(charList, { id = id, name = charData.name, realm = charData.realm })
+            end
+            table.sort(charList, function(a, b) return a.name < b.name end)
+            
+            for _, char in ipairs(charList) do
+                local displayName = char.name .. (char.realm ~= GetRealmName() and " (*)" or "")
+                info = UIDropDownMenu_CreateInfo()
+                info.text    = displayName
+                info.arg1    = char.id
+                info.checked = (ledgerCharFilter == char.id)
+                info.func    = function(btn, arg1)
+                    ledgerCharFilter = arg1
+                    UIDropDownMenu_SetText(filterDropdown, btn:GetText())
+                    UI:UpdateWarbandLedger()
+                end
+                UIDropDownMenu_AddButton(info)
+            end
+        end)
+    end
+    
+    filterDropdown:SetScript("OnShow", RefreshFilterDropdown)
+    RefreshFilterDropdown()
+    parent.ledgerFilterDropdown = filterDropdown
+    
+    -- Stats line — anchored directly below the title, nothing else in the way
     local statsText = content:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    statsText:SetPoint("TOPLEFT", summaryText, "BOTTOMLEFT", 0, -10)
+    statsText:SetPoint("TOPLEFT", summaryText, "BOTTOMLEFT", 0, -18)
     parent.warbandStatsText = statsText
     
     local separator = content:CreateTexture(nil, "ARTWORK")
     separator:SetColorTexture(0.25, 0.25, 0.25, 0.8)
     separator:SetHeight(1)
-    separator:SetPoint("TOPLEFT", content, "TOPLEFT", 0, -50)
-    separator:SetPoint("TOPRIGHT", content, "TOPRIGHT", 0, -50)
+    separator:SetPoint("TOPLEFT",  content, "TOPLEFT",  0, -88)
+    separator:SetPoint("TOPRIGHT", content, "TOPRIGHT", 0, -88)
     
-    local colTime = 15
-    local colChar = 120
-    local colType = 260
-    local colAmount = 400
-    local colBalance = 560
+    local colTime    = 15
+    local colChar    = 130
+    local colType    = 290
+    local colAmount  = 430
+    local colBalance = 610
+    local colNote    = 790
     
     local hTime = content:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    hTime:SetPoint("TOPLEFT", colTime, -60)
+    hTime:SetPoint("TOPLEFT", colTime, -98)
     hTime:SetText("Time")
     hTime:SetTextColor(0.8, 0.8, 0.8)
     
     local hChar = content:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    hChar:SetPoint("TOPLEFT", colChar, -60)
+    hChar:SetPoint("TOPLEFT", colChar, -98)
     hChar:SetText("Character")
     hChar:SetTextColor(0.8, 0.8, 0.8)
     
     local hType = content:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    hType:SetPoint("TOPLEFT", colType, -60)
+    hType:SetPoint("TOPLEFT", colType, -98)
     hType:SetText("Type")
     hType:SetTextColor(0.8, 0.8, 0.8)
     
     local hAmount = content:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    hAmount:SetPoint("TOPLEFT", colAmount, -60)
+    hAmount:SetPoint("TOPLEFT", colAmount, -98)
     hAmount:SetText("Amount")
     hAmount:SetTextColor(0.8, 0.8, 0.8)
     
     local hBalance = content:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    hBalance:SetPoint("TOPLEFT", colBalance, -60)
+    hBalance:SetPoint("TOPLEFT", colBalance, -98)
     hBalance:SetText("Warband Bank")
     hBalance:SetTextColor(0.8, 0.8, 0.8)
     
+    local hNote = content:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    hNote:SetPoint("TOPLEFT", colNote, -98)
+    hNote:SetText("Note")
+    hNote:SetTextColor(0.8, 0.8, 0.8)
+    
     local scrollFrame = CreateFrame("ScrollFrame", nil, content, "UIPanelScrollFrameTemplate")
-    scrollFrame:SetPoint("TOPLEFT", content, "TOPLEFT", 0, -80)
+    scrollFrame:SetPoint("TOPLEFT",     content, "TOPLEFT",  0,   -116)
     scrollFrame:SetPoint("BOTTOMRIGHT", content, "BOTTOMRIGHT", -26, 0)
     
     local scrollContent = CreateFrame("Frame")
-    scrollContent:SetWidth(800)
+    scrollContent:SetWidth(980)
     scrollFrame:SetScrollChild(scrollContent)
     
     parent.warbandScrollContent = scrollContent
@@ -446,7 +514,8 @@ function SetupWarbandLedgerContent(content, parent)
         char = colChar,
         type = colType,
         amount = colAmount,
-        balance = colBalance
+        balance = colBalance,
+        note = colNote
     }
 end
 
@@ -1118,14 +1187,19 @@ function UI:UpdateWarbandLedger()
     if not ledgerFrame or not ledgerFrame.warbandScrollContent then return end
     local Data = WarbandAccountant.Data
     local content = ledgerFrame.warbandScrollContent
-    local entries = Data:GetLedgerEntries(100)
+    local allEntries = Data:GetLedgerEntries(200)
     local colPos = ledgerFrame.ledgerColPos or {
-        time = 15,
-        char = 120,
-        type = 260,
-        amount = 400,
-        balance = 560
+        time = 15, char = 120, type = 260, amount = 400, balance = 560, note = 660
     }
+    
+    -- Apply character filter
+    local entries = {}
+    for _, entry in ipairs(allEntries) do
+        if ledgerCharFilter == nil or entry.character == ledgerCharFilter then
+            table.insert(entries, entry)
+            if #entries >= 100 then break end
+        end
+    end
     
     for _, row in ipairs(ledgerFrame.warbandRows or {}) do if row then row:Hide() end end
     wipe(ledgerFrame.warbandRows or {})
@@ -1151,17 +1225,25 @@ function UI:UpdateWarbandLedger()
         madePrefix = ""
     end
     
-    ledgerFrame.warbandStatsText:SetText(string.format("Deposited: |cFF00FF00%s|r  |  Withdrawn: |cFFFF0000%s|r  |  Made: %s%s%s|r",
-        WarbandAccountant.FormatGold(totalDeposited), 
+    local weeklyIncome = Data:GetWeeklyIncome()
+    local weeklyColor  = weeklyIncome >= 0 and "|cFF00FF00" or "|cFFFF0000"
+    local weeklySign   = weeklyIncome >= 0 and "+" or ""
+    
+    ledgerFrame.warbandStatsText:SetText(string.format(
+        "Deposited: |cFF00FF00%s|r  |  Withdrawn: |cFFFF0000%s|r  |  Made: %s%s%s|r  |  This Week: %s%s%s|r",
+        WarbandAccountant.FormatGold(totalDeposited),
         WarbandAccountant.FormatGold(totalWithdrawn),
-        madeColor,
-        madePrefix,
-        WarbandAccountant.FormatGold(totalMade)))
+        madeColor, madePrefix, WarbandAccountant.FormatGold(totalMade),
+        weeklyColor, weeklySign, WarbandAccountant.FormatGold(weeklyIncome)))
     
     if #entries == 0 then
         local emptyText = content:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
         emptyText:SetPoint("CENTER", 0, 0)
-        emptyText:SetText("No transactions recorded yet.\nOpen your Warband Bank to record transfers.")
+        if ledgerCharFilter then
+            emptyText:SetText("No transactions recorded for this character.")
+        else
+            emptyText:SetText("No transactions recorded yet.\nOpen your Warband Bank to record transfers.")
+        end
         emptyText:SetJustifyH("CENTER")
         content:SetHeight(400)
         ledgerFrame.warbandEmptyText = emptyText
@@ -1173,7 +1255,7 @@ function UI:UpdateWarbandLedger()
     
     for i, entry in ipairs(entries) do
         local row = CreateFrame("Frame", nil, content)
-        row:SetSize(800, rowHeight)
+        row:SetSize(980, rowHeight)
         row:SetPoint("TOPLEFT", 0, yOffset)
         
         if i % 2 == 0 then
@@ -1213,6 +1295,16 @@ function UI:UpdateWarbandLedger()
         balanceText:SetText(WarbandAccountant.FormatGold(entry.balanceAfter))
         balanceText:SetTextColor(1, 0.82, 0)
         balanceText:SetJustifyH("RIGHT")
+        
+        -- Note column
+        if colPos.note and entry.note and entry.note ~= "" then
+            local noteText = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+            noteText:SetPoint("LEFT", colPos.note, 0)
+            noteText:SetText(entry.note)
+            noteText:SetWidth(185)
+            noteText:SetJustifyH("LEFT")
+            noteText:SetTextColor(0.6, 0.6, 0.6)
+        end
         
         table.insert(ledgerFrame.warbandRows, row)
         yOffset = yOffset - rowHeight
@@ -1284,24 +1376,204 @@ StaticPopupDialogs["WARBANDACCOUNTANT_DELETE_CHARACTER"] = {
     preferredIndex = 3,
 }
 
--- Update notification dialog
-StaticPopupDialogs["WARBANDACCOUNTANT_UPDATE_NOTIFICATION"] = {
-    text = "|cFFFFD700Warband Accountant v1.0.4|r\n\n|cFF00FF00NEW FEATURE:|r Character Deletion\n\nYou can now delete ghost/old characters!\n\n• Click the red |cFFFF0000Delete|r button in the Targets tab\n• Or use |cFFFFFFFF/wba delete CharacterName|r\n\nPerfect for cleaning up after character renames!\n\nType |cFFFFFFFF/wba help|r for all commands.",
-    button1 = "Got it!",
-    timeout = 0,
-    whileDead = true,
-    hideOnEscape = true,
-    preferredIndex = 3,
-}
+-- ── Changelog ────────────────────────────────────────────────────────────────
+-- Data lives in Changelog.lua (WarbandAccountant.Changelog / .ChangelogVersions)
+-- Edit that file to add new versions — nothing here needs changing.
+
+local C_TITLE   = "00ccff"
+local C_VERSION = "ffcc00"
+local C_NEW     = "44ff88"
+local C_FIX     = "ff9944"
+local C_IMPROVE = "00ccff"
+
+local function wbaCol(hex, t) return "|cff" .. hex .. t .. "|r" end
+
+local FRAME_W   = 460
+local FRAME_H   = 380
+local PAD       = 16
+local CONTENT_W = FRAME_W - PAD * 2 - 20
+
+local wbaChangelogPopup = nil
+
+local function WBA_BuildChangelogContent(scrollChild, startVersion)
+    -- Clear previous content
+    if scrollChild._rows then
+        for _, w in ipairs(scrollChild._rows) do w:Hide(); w:SetParent(nil) end
+    end
+    scrollChild._rows = {}
+    local rows = scrollChild._rows
+
+    -- Read data from Changelog.lua via the shared addon table
+    local VERSIONS  = WarbandAccountant.ChangelogVersions or {}
+    local CHANGELOG = WarbandAccountant.Changelog         or {}
+
+    local yOff       = -PAD
+    local LH_VERSION = 24
+    local LH_TAG     = 20
+    local LH_BODY    = 16
+    local LH_GAP     = 6
+
+    -- Show startVersion and all older versions
+    local show = {}
+    local found = false
+    for _, v in ipairs(VERSIONS) do
+        if v == startVersion then found = true end
+        if found then table.insert(show, v) end
+    end
+    if #show == 0 then show = VERSIONS end
+
+    for vi, version in ipairs(show) do
+        local entries = CHANGELOG[version]
+        if entries then
+            -- Version header
+            local vh = scrollChild:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+            vh:SetPoint("TOPLEFT", PAD, yOff)
+            vh:SetWidth(CONTENT_W)
+            vh:SetJustifyH("LEFT")
+            vh:SetText(wbaCol(C_VERSION, "Version " .. version))
+            table.insert(rows, vh)
+            yOff = yOff - LH_VERSION
+
+            -- Gold underline
+            local uline = scrollChild:CreateTexture(nil, "ARTWORK")
+            uline:SetColorTexture(1, 0.82, 0, 0.3)
+            uline:SetHeight(1)
+            uline:SetPoint("TOPLEFT", PAD, yOff)
+            uline:SetWidth(CONTENT_W)
+            table.insert(rows, uline)
+            yOff = yOff - 8
+
+            for _, entry in ipairs(entries) do
+                if entry.tag then
+                    -- Tagged line: [New] / [Fix] / [Improve]
+                    local tagHex = (entry.tag == "New") and C_NEW
+                               or (entry.tag == "Fix") and C_FIX
+                               or C_IMPROVE
+                    local fs = scrollChild:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+                    fs:SetPoint("TOPLEFT", PAD, yOff)
+                    fs:SetWidth(CONTENT_W)
+                    fs:SetJustifyH("LEFT")
+                    fs:SetText(wbaCol(tagHex, "[" .. entry.tag .. "]") .. " " .. entry.text)
+                    table.insert(rows, fs)
+                    yOff = yOff - LH_TAG
+                else
+                    -- Body / description line — indented, dimmer
+                    local fs = scrollChild:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+                    fs:SetPoint("TOPLEFT", PAD + 14, yOff)
+                    fs:SetWidth(CONTENT_W - 14)
+                    fs:SetJustifyH("LEFT")
+                    fs:SetTextColor(0.75, 0.75, 0.75)
+                    fs:SetText(entry.text)
+                    table.insert(rows, fs)
+                    yOff = yOff - math.max(LH_BODY, fs:GetStringHeight() + 2)
+                end
+                yOff = yOff - LH_GAP
+            end
+
+            if vi < #show then yOff = yOff - 10 end
+        end
+    end
+
+    scrollChild:SetHeight(math.max(300, math.abs(yOff) + PAD))
+end
+
+local function WBA_BuildChangelogFrame()
+    local popup = CreateFrame("Frame", "WBAChangelogFrame", UIParent, "ButtonFrameTemplate")
+    popup:SetSize(FRAME_W, FRAME_H)
+    popup:SetPoint("CENTER", UIParent, "CENTER", 0, 60)
+    popup:SetFrameStrata("DIALOG")
+    popup:SetMovable(true)
+    popup:EnableMouse(true)
+    popup:RegisterForDrag("LeftButton")
+    popup:SetScript("OnDragStart", popup.StartMoving)
+    popup:SetScript("OnDragStop",  popup.StopMovingOrSizing)
+    popup:EnableKeyboard(true)
+    popup:SetScript("OnKeyDown", function(self, key)
+        if key == "ESCAPE" then self:Hide(); self:SetPropagateKeyboardInput(false)
+        else self:SetPropagateKeyboardInput(true) end
+    end)
+    tinsert(UISpecialFrames, popup:GetName())
+    popup:Hide()
+
+    -- Portrait: show the container and set icon from Changelog.lua
+    if popup.PortraitContainer then
+        popup.PortraitContainer:Show()
+        local iconPath = WarbandAccountant.ChangelogIcon
+                      or "Interface\\AddOns\\WarbandAccountant\\Textures\\minimap"
+        local portrait = popup.PortraitContainer.portrait
+                      or _G[popup:GetName() .. "Portrait"]
+        if portrait then
+            portrait:SetTexture(iconPath)
+            portrait:SetTexCoord(0.07, 0.93, 0.07, 0.93)
+        else
+            local tex = popup.PortraitContainer:CreateTexture(nil, "ARTWORK")
+            tex:SetAllPoints(popup.PortraitContainer)
+            tex:SetTexture(iconPath)
+            tex:SetTexCoord(0.07, 0.93, 0.07, 0.93)
+        end
+    end
+    popup.TitleContainer.TitleText:SetText(
+        wbaCol(C_TITLE, "Warband Accountant") .. "  —  What's New")
+
+    -- Scroll area (inside the Inset)
+    local inset = popup.Inset
+    local scroll = CreateFrame("ScrollFrame", nil, inset, "UIPanelScrollFrameTemplate")
+    scroll:SetPoint("TOPLEFT",     inset, "TOPLEFT",     4,  -4)
+    scroll:SetPoint("BOTTOMRIGHT", inset, "BOTTOMRIGHT", -22, 36)
+
+    local scrollChild = CreateFrame("Frame")
+    scrollChild:SetWidth(CONTENT_W)
+    scroll:SetScrollChild(scrollChild)
+    popup.scrollChild = scrollChild
+
+    -- Footer buttons
+    local gotItBtn = CreateFrame("Button", nil, popup, "UIPanelButtonTemplate")
+    gotItBtn:SetSize(120, 26)
+    gotItBtn:SetPoint("CENTER", popup, "BOTTOM", 70, 14)
+    gotItBtn:SetText("Got it!")
+    gotItBtn:SetScript("OnClick", function() popup:Hide() end)
+
+    local optBtn = CreateFrame("Button", nil, popup, "UIPanelButtonTemplate")
+    optBtn:SetSize(120, 26)
+    optBtn:SetPoint("CENTER", popup, "BOTTOM", -70, 14)
+    optBtn:SetText("Open Options")
+    optBtn:SetScript("OnClick", function()
+        popup:Hide()
+        WarbandAccountant.Settings:OpenSettings()
+    end)
+
+    return popup
+end
+
+function UI:ShowChangelog(version)
+    if not wbaChangelogPopup then
+        wbaChangelogPopup = WBA_BuildChangelogFrame()
+    end
+
+    local popup = wbaChangelogPopup
+
+    if popup:IsShown() and popup.shownVersion == version then
+        popup:Hide()
+        return
+    end
+
+    popup.TitleContainer.TitleText:SetText(
+        wbaCol(C_TITLE, "Warband Accountant") .. "  —  What's New")
+
+    WBA_BuildChangelogContent(popup.scrollChild, version)
+    popup.shownVersion = version
+    popup:Show()
+end
 
 function UI:CheckAndShowUpdateNotification()
     local Data = WarbandAccountant.Data
     local lastSeenVersion = Data:GetLastSeenVersion()
-    local currentVersion = Data:GetCurrentAddonVersion()
-    
-    -- Show notification if this is a new version
+    local currentVersion  = Data:GetCurrentAddonVersion()
+
     if lastSeenVersion ~= currentVersion then
-        StaticPopup_Show("WARBANDACCOUNTANT_UPDATE_NOTIFICATION")
         Data:SetLastSeenVersion(currentVersion)
+        C_Timer.After(0.5, function()
+            UI:ShowChangelog(currentVersion)
+        end)
     end
 end

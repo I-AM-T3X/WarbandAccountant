@@ -30,7 +30,7 @@ function SettingsModule:CreateBlizzardSettings()
     
     local version = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     version:SetPoint("TOP", subtitle, "BOTTOM", 0, -5)
-    version:SetText("Version: 1.0.4")
+    version:SetText("Version: 1.0.5")
     version:SetTextColor(0.5, 0.5, 0.5)
     
     local featuresHeader = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
@@ -161,6 +161,7 @@ SlashCmdList["WARBANDACCOUNTANT"] = function(msg)
         print("  /wba config - Open settings")
         print("  /wba toggle - Toggle main window")
         print("  /wba process - Force process transfers")
+        print("  /wba changelog - Show version changelog")
         print("  /wba delete <name> - Delete a character (e.g., /wba delete OldName)")
         print("  /wba resetgm - Reset Guild Master cache (if promoted)")
         print("  /wba clearguild - Clear guild bank data")
@@ -170,6 +171,9 @@ SlashCmdList["WARBANDACCOUNTANT"] = function(msg)
         WarbandAccountant.UI:ToggleMainWindow()
     elseif msg == "process" then
         WarbandAccountant.Core:ForceProcess()
+    elseif msg == "changelog" then
+        local Data = WarbandAccountant.Data
+        WarbandAccountant.UI:ShowChangelog(Data:GetCurrentAddonVersion())
     elseif msg == "resetgm" then
         WarbandAccountant.Data:ResetGuildMasterCache()
         print("|cFF00FF00Warband Accountant:|r Guild Master cache cleared. Will check again on next tooltip.")

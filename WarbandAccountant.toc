@@ -1,8 +1,8 @@
-## Interface: 120001, 120005
+## Interface: 120001, 120005, 120007
 ## Title: Warband Accountant
 ## Notes: Automated Warband gold management with per-character targets
 ## Author: I_AM_T3X
-## Version: 1.0.4
+## Version: 1.0.5
 ## SavedVariables: WarbandAccountantDB
 
 # Libraries
@@ -15,4 +15,5 @@ Libs\LibDBIcon-1.0\LibDBIcon-1.0.lua
 Data.lua
 Core.lua
 Settings.lua
+Changelog.lua
 UI.lua
