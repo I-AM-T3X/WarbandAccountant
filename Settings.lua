@@ -30,7 +30,7 @@ function SettingsModule:CreateBlizzardSettings()
     
     local version = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     version:SetPoint("TOP", subtitle, "BOTTOM", 0, -5)
-    version:SetText("Version: 1.0.6")
+    version:SetText("Version: 1.0.7")
     version:SetTextColor(0.5, 0.5, 0.5)
     
     local featuresHeader = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
@@ -162,6 +162,8 @@ SlashCmdList["WARBANDACCOUNTANT"] = function(msg)
         print("  /wba toggle - Toggle main window")
         print("  /wba process - Force process transfers")
         print("  /wba changelog - Show version changelog")
+        print("  /wba weekly - Debug weekly income info")
+        print("  /wba resetweekly - Force weekly snapshot recalculation")
         print("  /wba delete <name> - Delete a character (e.g., /wba delete OldName)")
         print("  /wba resetgm - Reset Guild Master cache (if promoted)")
         print("  /wba clearguild - Clear guild bank data")
@@ -174,6 +176,16 @@ SlashCmdList["WARBANDACCOUNTANT"] = function(msg)
     elseif msg == "changelog" then
         local Data = WarbandAccountant.Data
         WarbandAccountant.UI:ShowChangelog(Data:GetCurrentAddonVersion())
+    elseif msg == "resetweekly" then
+        print("|cFFFFD700WarbandAccountant:|r Weekly income is calculated live from the ledger — nothing to reset.")
+    elseif msg == "weekly" then
+        local Data = WarbandAccountant.Data
+        local income  = Data:GetWeeklyIncome()
+        local resetTS = Data:GetWeeklyResetTimestamp()
+        local now     = time()
+        print("|cFFFFD700WarbandAccountant Weekly:|r")
+        print("  Reset: " .. date("!%Y-%m-%d %H:%M:%S", resetTS) .. " UTC (" .. tostring(math.floor((now - resetTS) / 3600)) .. "h ago)")
+        print("  Weekly Income: " .. WarbandAccountant.FormatGold(income))
     elseif msg == "resetgm" then
         WarbandAccountant.Data:ResetGuildMasterCache()
         print("|cFF00FF00Warband Accountant:|r Guild Master cache cleared. Will check again on next tooltip.")

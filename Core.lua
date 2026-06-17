@@ -4,16 +4,19 @@ local Core = {}
 WarbandAccountant.Core = Core
 
 function WarbandAccountant.FormatGold(copper)
+    local negative = copper < 0
+    copper = math.abs(copper)
     local gold = math.floor(copper / 10000)
     local silver = math.floor((copper % 10000) / 100)
     local remainingCopper = copper % 100
+    local prefix = negative and "-" or ""
     
     if gold > 0 then
-        return string.format("|cFFFFD700%dg|r |cFFC7C7C7%ds|r |cFFEDA55F%dc|r", gold, silver, remainingCopper)
+        return string.format("%s|cFFFFD700%dg|r |cFFC7C7C7%ds|r |cFFEDA55F%dc|r", prefix, gold, silver, remainingCopper)
     elseif silver > 0 then
-        return string.format("|cFFC7C7C7%ds|r |cFFEDA55F%dc|r", silver, remainingCopper)
+        return string.format("%s|cFFC7C7C7%ds|r |cFFEDA55F%dc|r", prefix, silver, remainingCopper)
     else
-        return string.format("|cFFEDA55F%dc|r", remainingCopper)
+        return string.format("%s|cFFEDA55F%dc|r", prefix, remainingCopper)
     end
 end
 

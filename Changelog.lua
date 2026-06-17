@@ -20,6 +20,7 @@ local ADDON_NAME, WarbandAccountant = ...
 
 -- Ordered newest-first. Add new version strings here when releasing.
 WarbandAccountant.ChangelogVersions = {
+    "1.0.7",
     "1.0.6",
     "1.0.5",
     "1.0.4",
@@ -29,6 +30,13 @@ WarbandAccountant.ChangelogIcon = "Interface\\AddOns\\WarbandAccountant\\Texture
 
 -- Keyed by version string. Each value is a list of entry tables.
 WarbandAccountant.Changelog = {
+
+    ["1.0.7"] = {
+        { tag="Fix", text="Weekly Income displaying incorrectly" },
+        { tag=nil,   text="Reset timestamp calculation was using UTC date math that doesn't work correctly in WoW's Lua environment. Now uses a hardcoded known reset anchor with 7-day stepping." },
+        { tag="Fix", text="Negative gold values displaying garbled output" },
+        { tag=nil,   text="Lua's modulo operator on negative numbers returns unexpected results. Negative gold amounts (e.g. a weekly loss) now display correctly with a minus sign." },
+    },
 
     ["1.0.6"] = {
         { tag="Fix", text="Weekly Income Reset Timestamp" },

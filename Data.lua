@@ -5,7 +5,7 @@ WarbandAccountant.Data = Data
 
 local DEFAULT_TARGET = 1000000
 local CURRENT_DB_VERSION = 1
-local CURRENT_ADDON_VERSION = "1.0.6"
+local CURRENT_ADDON_VERSION = "1.0.7"
 
 -- Weekly reset day by region (1=Sunday, 2=Monday, 3=Tuesday, 4=Wednesday, 5=Thursday, 6=Friday, 7=Saturday)
 -- WoW resets happen at specific times; we key off the weekday and treat the reset as midnight UTC that day.
@@ -44,6 +44,8 @@ function Data:Init()
     
     db.global.totalDeposited = db.global.totalDeposited or 0
     db.global.totalWithdrawn = db.global.totalWithdrawn or 0
+    -- Persist last known warband balance across sessions
+    db.global.lastKnownWarbandBalance = db.global.lastKnownWarbandBalance or 0
     
     db.global.mainDefault = db.global.mainDefault or (100 * 10000)
     db.global.mainAltDefault = db.global.mainAltDefault or (100 * 10000)
@@ -99,7 +101,6 @@ function Data:Init()
     
     self:InitSessionData(charID)
     self:UpdateCharacterCache()
-    self:InitWeeklyAccumulator()
 end
 
 function Data:InitSessionData(charID)
@@ -328,11 +329,8 @@ function Data:AddLedgerEntry(entry)
     local amt = entry.amount or 0
     if entry.type == "DEPOSIT" or entry.type == "MANUAL_DEPOSIT" then
         db.global.totalDeposited = (db.global.totalDeposited or 0) + amt
-        -- Failsafe weekly accumulator (used if ledger fills before reset)
-        self:_AccumulateWeekly(amt, true)
     elseif entry.type == "WITHDRAW" or entry.type == "MANUAL_WITHDRAW" then
         db.global.totalWithdrawn = (db.global.totalWithdrawn or 0) + amt
-        self:_AccumulateWeekly(amt, false)
     end
 end
 
@@ -511,118 +509,56 @@ function Data:ShouldShowGuildBankFeatures()
 end
 
 -- ── Weekly Income Tracking ────────────────────────────────────────────────────
--- Primary source: walk the ledger and sum entries since the weekly reset.
--- Failsafe: a running db.global.weeklyNet accumulator updated on every
--- AddLedgerEntry call, reset when the weekly reset day arrives.
--- If the oldest ledger entry is newer than the reset timestamp (ledger rolled
--- over mid-week), we fall back to the accumulator so the number stays accurate.
+-- Weekly Income = Bank balance now - Bank balance at last reset.
+-- Both values come from the ledger's balanceAfter field — no live API needed.
+-- The most recent entry before the reset = balance at reset.
+-- The most recent entry overall = current balance.
 
--- Region reset times in UTC. wday = Lua weekday (1=Sun,2=Mon,3=Tue,4=Wed,5=Thu)
-local REGION_RESET_UTC = {
-    ["US"] = { wday=3, hour=16 },  -- Tuesday  9:00 AM PDT  = 16:00 UTC
-    ["EU"] = { wday=4, hour=7  },  -- Wednesday 8:00 AM CEST = 07:00 UTC (summer)
-    ["KR"] = { wday=5, hour=1  },  -- Thursday 10:00 AM KST  = 01:00 UTC
-    ["TW"] = { wday=5, hour=1  },
-    ["CN"] = { wday=5, hour=1  },
+local KNOWN_RESET = {
+    ["US"] = 1781618400,  -- Tue 2026-06-16 10:00 AM EDT
+    ["EU"] = 1781604000,  -- Wed 2026-06-17 08:00 AM CEST
+    ["KR"] = 1781564400,  -- Thu 2026-06-18 10:00 AM KST
+    ["TW"] = 1781564400,
+    ["CN"] = 1781564400,
 }
-local DEFAULT_RESET_UTC = { wday=3, hour=16 }  -- fallback NA
+local WEEK_SECONDS = 604800
 
-local function GetResetInfo()
+local function GetCurrentResetTimestamp()
     local region = GetCurrentRegion and GetCurrentRegion() or nil
-    local regionNames = { [1]="US", [2]="KR", [3]="EU", [4]="TW", [5]="CN" }
-    local regionStr = region and regionNames[region] or nil
-    return REGION_RESET_UTC[regionStr] or DEFAULT_RESET_UTC
-end
-
--- Returns the UTC timestamp of the most recent weekly server reset.
--- Uses actual server reset time (e.g. Tuesday 9 AM PDT = 16:00 UTC for NA).
-local function GetLastResetTimestamp()
-    local info = GetResetInfo()
-    local now  = time()
-    local t    = date("!*t", now)  -- UTC breakdown
-
-    -- Days since the reset weekday
-    local daysSince = (t.wday - info.wday) % 7
-
-    -- Midnight UTC of that reset weekday
-    local midnightUTC     = now - (t.hour * 3600 + t.min * 60 + t.sec)
-    local resetDayMidnight = midnightUTC - (daysSince * 86400)
-
-    -- Add the reset hour offset to get the exact reset moment
-    local resetTS = resetDayMidnight + (info.hour * 3600)
-
-    -- If that lands in the future (we're before this week's reset time),
-    -- roll back one full week to the previous reset.
-    if resetTS > now then
-        resetTS = resetTS - (7 * 86400)
-    end
-
-    return resetTS
-end
-
--- Called from AddLedgerEntry to keep the accumulator up to date.
--- Also checks if the reset day has passed and clears if so.
-function Data:_AccumulateWeekly(amount, isDeposit)
-    if not db or not db.global then return end
-    local resetTS = GetLastResetTimestamp()
-    if (db.global.weeklyNetReset or 0) < resetTS then
-        db.global.weeklyNet      = 0
-        db.global.weeklyNetReset = resetTS
-    end
-    
-    db.global.weeklyNet = (db.global.weeklyNet or 0) + (isDeposit and amount or -amount)
+    local names  = { [1]="US", [2]="KR", [3]="EU", [4]="TW", [5]="CN" }
+    local anchor = KNOWN_RESET[names[region] or ""] or KNOWN_RESET["US"]
+    local now    = time()
+    while anchor + WEEK_SECONDS <= now do anchor = anchor + WEEK_SECONDS end
+    while anchor > now do anchor = anchor - WEEK_SECONDS end
+    return anchor
 end
 
 function Data:GetWeeklyIncome()
-    if not db then return 0 end
-    local resetTS = GetLastResetTimestamp()
-    
-    -- Check if the accumulator needs a new-week reset (handles the case where
-    -- no transactions have fired yet this session to trigger _AccumulateWeekly)
-    if db.global and (db.global.weeklyNetReset or 0) < resetTS then
-        db.global.weeklyNet      = 0
-        db.global.weeklyNetReset = resetTS
-    end
-    
-    -- Try the ledger scan first — it's exact.
-    -- Find the oldest entry to see if the ledger covers back to the reset.
-    local ledger = db.ledger or {}
-    local oldest = ledger[#ledger]
-    local ledgerCoversReset = oldest and oldest.timestamp and oldest.timestamp <= resetTS
-    
-    if ledgerCoversReset or #ledger == 0 then
-        -- Ledger goes back far enough — scan it for an exact answer.
-        local net = 0
-        for _, entry in ipairs(ledger) do
-            if entry.timestamp and entry.timestamp >= resetTS then
-                if entry.type == "DEPOSIT" or entry.type == "MANUAL_DEPOSIT" then
-                    net = net + (entry.amount or 0)
-                elseif entry.type == "WITHDRAW" or entry.type == "MANUAL_WITHDRAW" then
-                    net = net - (entry.amount or 0)
-                end
-            end
+    if not db or not db.ledger or #db.ledger == 0 then return 0 end
+    local resetTS = GetCurrentResetTimestamp()
+
+    -- Current balance = most recent ledger entry
+    local balanceNow = db.ledger[1].balanceAfter or 0
+
+    -- Balance at reset = most recent entry whose timestamp is <= resetTS
+    local balanceAtReset = nil
+    for _, entry in ipairs(db.ledger) do
+        if entry.timestamp and entry.timestamp <= resetTS then
+            balanceAtReset = entry.balanceAfter
+            break
         end
-        return net
-    else
-        -- Ledger rolled over mid-week (1000+ entries in one week!).
-        -- Fall back to the running accumulator.
-        return db.global.weeklyNet or 0
     end
+
+    if not balanceAtReset then return 0 end
+    return balanceNow - balanceAtReset
 end
 
--- Initialise the failsafe accumulator fields in the DB if missing.
-function Data:InitWeeklyAccumulator()
-    if not db or not db.global then return end
-    db.global.weeklyNet      = db.global.weeklyNet      or 0
-    db.global.weeklyNetReset = db.global.weeklyNetReset or 0
+function Data:GetWeeklyResetTimestamp()
+    return GetCurrentResetTimestamp()
 end
-
--- Kept for API compatibility
-function Data:CheckWeeklyReset() end
-function Data:RecalcWeeklyIncome() end
-function Data:GetWeeklyResetTimestamp() return 0 end
 
 -- ─────────────────────────────────────────────────────────────────────────────
+
 
 function Data:GetCurrentAddonVersion()
     return CURRENT_ADDON_VERSION
