@@ -98,7 +98,7 @@ All libraries (LibDBIcon-1.0, LibDataBroker-1.1, CallbackHandler-1.0, LibStub) a
 
 ## Compatibility
 
-- **Retail WoW** — patch 12.0.0+ (Midnight: Revelations)
+- **Retail WoW** — patch 12.0.0+ (Midnight)
 - Not compatible with Classic, Cataclysm Classic, or Season of Discovery
 
 ---
