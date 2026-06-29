@@ -4,180 +4,84 @@ local SettingsModule = {}
 WarbandAccountant.Settings = SettingsModule
 
 function SettingsModule:Init()
-    self:CreateBlizzardSettings()
+    self:RegisterBlizzardStub()
 end
 
-function SettingsModule:CreateBlizzardSettings()
-    local Data = WarbandAccountant.Data
-    
-    local frame = CreateFrame("Frame", "WarbandAccountantSettingsCanvas", UIParent)
-    frame:SetSize(600, 400)
+-- Minimal Blizzard addon settings entry -- just points to /wba
+function SettingsModule:RegisterBlizzardStub()
+    local frame = CreateFrame("Frame", "WarbandAccountantSettingsStub", UIParent)
+    frame:SetSize(400, 200)
     frame.name = "Warband Accountant"
-    
+
     local bg = frame:CreateTexture(nil, "BACKGROUND")
     bg:SetAllPoints()
     bg:SetColorTexture(0.05, 0.05, 0.05, 0.9)
-    
+
     local title = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalHuge")
     title:SetPoint("TOP", 0, -40)
     title:SetText("Warband Accountant")
     title:SetTextColor(1, 0.82, 0)
-    
-    local subtitle = frame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    subtitle:SetPoint("TOP", title, "BOTTOM", 0, -5)
-    subtitle:SetText("Use /wba to open the main window with Targets and Settings tabs")
-    subtitle:SetTextColor(0.6, 0.6, 0.6)
-    
-    local version = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    version:SetPoint("TOP", subtitle, "BOTTOM", 0, -5)
-    version:SetText("Version: 1.0.7")
-    version:SetTextColor(0.5, 0.5, 0.5)
-    
-    local featuresHeader = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
-    featuresHeader:SetPoint("TOP", version, "BOTTOM", 0, -25)
-    featuresHeader:SetText("Features")
-    featuresHeader:SetTextColor(1, 0.82, 0)
-    
-    local leftCol = {
-        "Per-character gold targets",
-        "Auto deposit & withdraw",
-        "Transaction ledger",
-        "Session gold tracking"
-    }
-    
-    local rightCol = {
-        "Character classifications",
-        "Pause automation per char",
-        "Customizable sorting",
-        "Minimap gold summary"
-    }
-    
-    local lineHeight = 22
-    
-    for i, text in ipairs(leftCol) do
-        local item = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-        item:SetPoint("TOP", featuresHeader, "BOTTOM", -110, -((i-1)*lineHeight) - 15)
-        item:SetWidth(180)
-        item:SetJustifyH("CENTER")
-        item:SetText(text)
-        item:SetTextColor(0.8, 0.8, 0.8)
-    end
-    
-    for i, text in ipairs(rightCol) do
-        local item = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-        item:SetPoint("TOP", featuresHeader, "BOTTOM", 110, -((i-1)*lineHeight) - 15)
-        item:SetWidth(180)
-        item:SetJustifyH("CENTER")
-        item:SetText(text)
-        item:SetTextColor(0.8, 0.8, 0.8)
-    end
-    
-    local openBtn = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
-    openBtn:SetPoint("TOP", featuresHeader, "BOTTOM", 0, -130)
-    openBtn:SetSize(200, 50)
-    openBtn:SetNormalFontObject("GameFontNormalLarge")
-    openBtn:SetHighlightFontObject("GameFontHighlightLarge")
-    openBtn:SetText("Open Options")
-    
-    local function StyleButtonAsRed(btn)
-        local regions = {btn:GetRegions()}
-        for _, region in ipairs(regions) do
-            if region:GetObjectType() == "Texture" then
-                region:SetVertexColor(0.8, 0.1, 0.1, 1)
-            end
-        end
-    end
-    
-    openBtn:SetScript("OnShow", function() StyleButtonAsRed(openBtn) end)
-    
-    openBtn:SetScript("OnClick", function()
-        WarbandAccountant.UI:ToggleMainWindow()
+
+    local sub = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+    sub:SetPoint("TOP", title, "BOTTOM", 0, -10)
+    sub:SetText("All settings are inside the addon window.")
+    sub:SetTextColor(0.6, 0.6, 0.6)
+
+    local btn = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
+    btn:SetSize(180, 40)
+    btn:SetPoint("TOP", sub, "BOTTOM", 0, -20)
+    btn:SetText("Open Warband Accountant")
+    btn:SetScript("OnClick", function()
+        WarbandAccountant.UI:Toggle("settings")
     end)
-    
-    local checkbox = CreateFrame("CheckButton", nil, frame, "InterfaceOptionsCheckButtonTemplate")
-    checkbox:SetPoint("TOP", openBtn, "BOTTOM", 0, -25)
-    
-    local settings = Data:GetSettings()
-    checkbox:SetChecked(not settings.hide)
-    
-    checkbox.Text:SetText("Show minimap button")
-    checkbox.Text:SetFontObject("GameFontHighlight")
-    
-    checkbox:SetScript("OnClick", function(self)
-        local show = self:GetChecked()
-        settings.hide = not show
-        if WarbandAccountant.UI.ToggleMinimapButton then
-            WarbandAccountant.UI:ToggleMinimapButton()
-        end
-    end)
-    
-    local ledgerNote = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    ledgerNote:SetPoint("TOP", checkbox, "BOTTOM", 0, -20)
-    ledgerNote:SetText("Left-click minimap button to open Ledger")
-    ledgerNote:SetTextColor(0.6, 0.6, 0.6)
-    
-    local resetBtn = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
-    resetBtn:SetPoint("BOTTOMRIGHT", -20, 20)
-    resetBtn:SetSize(120, 22)
-    resetBtn:SetText("Reset Statistics")
-    resetBtn:SetScript("OnClick", function()
-        StaticPopup_Show("WARBANDACCOUNTANT_RESET_TOTALS")
-    end)
-    
-    StaticPopupDialogs["WARBANDACCOUNTANT_RESET_TOTALS"] = {
-        text = "Reset all-time deposit/withdrawal statistics?\n\nThis will clear your total deposited, total withdrawn, and all ledger history. This cannot be undone.",
-        button1 = "Yes",
-        button2 = "No",
-        OnAccept = function() 
-            Data:ResetLedgerTotals()
-            print("|cFF00FF00Warband Accountant:|r Statistics reset")
-        end,
-        timeout = 0,
-        whileDead = true,
-        hideOnEscape = true,
-    }
-    
-    local infoText = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    infoText:SetPoint("BOTTOM", 0, 15)
-    infoText:SetText("Configure automatic gold management for your Warband")
-    infoText:SetTextColor(0.5, 0.5, 0.5)
-    
+
+    local note = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    note:SetPoint("TOP", btn, "BOTTOM", 0, -15)
+    note:SetText("Or type: /wba")
+    note:SetTextColor(0.5, 0.5, 0.5)
+
     local category = Settings.RegisterCanvasLayoutCategory(frame, "Warband Accountant")
     Settings.RegisterAddOnCategory(category)
-    
     self.category = category
-    self.canvasFrame = frame
 end
 
+function SettingsModule:OpenSettings()
+    WarbandAccountant.UI:Toggle("settings")
+end
+
+-- -- Slash Commands ------------------------------------------------------------
 SLASH_WARBANDACCOUNTANT1 = "/warbandaccountant"
 SLASH_WARBANDACCOUNTANT2 = "/wba"
 
 SlashCmdList["WARBANDACCOUNTANT"] = function(msg)
     msg = msg:lower():trim()
-    
-    if msg == "" or msg == "help" then
+
+    if msg == "" then
+        WarbandAccountant.UI:Toggle("overview")
+    elseif msg == "help" then
         print("|cFF00FF00Warband Accountant|r Commands:")
-        print("  /wba help - Show this help")
-        print("  /wba config - Open settings")
-        print("  /wba toggle - Toggle main window")
-        print("  /wba process - Force process transfers")
-        print("  /wba changelog - Show version changelog")
-        print("  /wba weekly - Debug weekly income info")
-        print("  /wba resetweekly - Force weekly snapshot recalculation")
-        print("  /wba delete <name> - Delete a character (e.g., /wba delete OldName)")
-        print("  /wba resetgm - Reset Guild Master cache (if promoted)")
-        print("  /wba clearguild - Clear guild bank data")
-    elseif msg == "config" then
-        SettingsModule:OpenSettings()
+        print("  /wba               - Toggle main window")
+        print("  /wba targets       - Open Targets tab")
+        print("  /wba ledger        - Open Ledger tab")
+        print("  /wba settings      - Open Settings tab")
+        print("  /wba changelog     - Open Changelog tab")
+        print("  /wba process       - Force process transfers")
+        print("  /wba weekly        - Debug weekly income info")
+        print("  /wba delete <name> - Delete a character")
+        print("  /wba resetgm       - Reset Guild Master cache")
+        print("  /wba clearguild    - Clear guild bank data")
+    elseif msg == "targets" then
+        WarbandAccountant.UI:Toggle("targets")
+    elseif msg == "ledger" then
+        WarbandAccountant.UI:Toggle("ledger")
+    elseif msg == "settings" or msg == "config" then
+        WarbandAccountant.UI:Toggle("settings")
+    elseif msg == "changelog" then
+        WarbandAccountant.UI:Toggle("changelog")
     elseif msg == "toggle" then
-        WarbandAccountant.UI:ToggleMainWindow()
+        WarbandAccountant.UI:Toggle("overview")
     elseif msg == "process" then
         WarbandAccountant.Core:ForceProcess()
-    elseif msg == "changelog" then
-        local Data = WarbandAccountant.Data
-        WarbandAccountant.UI:ShowChangelog(Data:GetCurrentAddonVersion())
-    elseif msg == "resetweekly" then
-        print("|cFFFFD700WarbandAccountant:|r Weekly income is calculated live from the ledger — nothing to reset.")
     elseif msg == "weekly" then
         local Data = WarbandAccountant.Data
         local income  = Data:GetWeeklyIncome()
@@ -188,34 +92,25 @@ SlashCmdList["WARBANDACCOUNTANT"] = function(msg)
         print("  Weekly Income: " .. WarbandAccountant.FormatGold(income))
     elseif msg == "resetgm" then
         WarbandAccountant.Data:ResetGuildMasterCache()
-        print("|cFF00FF00Warband Accountant:|r Guild Master cache cleared. Will check again on next tooltip.")
-	elseif msg == "clearguild" then
+        print("|cFF00FF00Warband Accountant:|r Guild Master cache cleared.")
+    elseif msg == "clearguild" then
         WarbandAccountant.Data:ClearGuildBankData()
         print("|cFF00FF00Warband Accountant:|r Guild bank data cleared.")
     elseif msg:match("^delete ") then
         local charName = msg:match("^delete (.+)$")
         if charName then
-            local realm = GetRealmName()
-            local charID = charName .. "-" .. realm
-            local success, result = WarbandAccountant.Data:DeleteCharacter(charID)
-            if success then
-                print("|cFF00FF00Warband Accountant:|r Deleted character: " .. result)
-                if WarbandAccountant.UI.RefreshTargetsTab then
-                    WarbandAccountant.UI:RefreshTargetsTab()
-                end
+            local charID = charName .. "-" .. GetRealmName()
+            local ok, result = WarbandAccountant.Data:DeleteCharacter(charID)
+            if ok then
+                print("|cFF00FF00Warband Accountant:|r Deleted: " .. result)
+                WarbandAccountant.UI:RefreshTargets()
             else
-                print("|cFFFF0000Warband Accountant:|r " .. (result or "Could not delete character"))
+                print("|cFFFF0000Warband Accountant:|r " .. (result or "Could not delete"))
             end
         else
             print("|cFFFF0000Warband Accountant:|r Usage: /wba delete CharacterName")
-        end	
+        end
     else
         print("|cFFFF0000Warband Accountant:|r Unknown command. Type /wba help")
-    end
-end
-
-function SettingsModule:OpenSettings()
-    if self.category then
-        Settings.OpenToCategory(self.category:GetID())
     end
 end

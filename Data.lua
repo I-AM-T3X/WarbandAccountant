@@ -5,7 +5,7 @@ WarbandAccountant.Data = Data
 
 local DEFAULT_TARGET = 1000000
 local CURRENT_DB_VERSION = 1
-local CURRENT_ADDON_VERSION = "1.0.7"
+local CURRENT_ADDON_VERSION = "2.0.0"
 
 -- Weekly reset day by region (1=Sunday, 2=Monday, 3=Tuesday, 4=Wednesday, 5=Thursday, 6=Friday, 7=Saturday)
 -- WoW resets happen at specific times; we key off the weekday and treat the reset as midnight UTC that day.
@@ -47,9 +47,21 @@ function Data:Init()
     -- Persist last known warband balance across sessions
     db.global.lastKnownWarbandBalance = db.global.lastKnownWarbandBalance or 0
     
-    db.global.mainDefault = db.global.mainDefault or (100 * 10000)
-    db.global.mainAltDefault = db.global.mainAltDefault or (100 * 10000)
-    db.global.altDefault = db.global.altDefault or (100 * 10000)
+    db.global.mainDefault       = db.global.mainDefault       or (100 * 10000)
+    db.global.mainAltDefault    = db.global.mainAltDefault    or (100 * 10000)
+    db.global.altDefault        = db.global.altDefault        or (100 * 10000)
+    db.global.crafterDefault    = db.global.crafterDefault    or (50  * 10000)
+    db.global.auctioneerDefault = db.global.auctioneerDefault or (500 * 10000)
+    db.global.bankAltDefault    = db.global.bankAltDefault    or (200 * 10000)
+
+    -- Category display names (user-renameable)
+    db.global.categoryNames = db.global.categoryNames or {}
+    db.global.categoryNames.main       = db.global.categoryNames.main       or "Main"
+    db.global.categoryNames.mainAlt    = db.global.categoryNames.mainAlt    or "Main Alt"
+    db.global.categoryNames.alt        = db.global.categoryNames.alt        or "Alt"
+    db.global.categoryNames.crafter    = db.global.categoryNames.crafter    or "Crafter"
+    db.global.categoryNames.auctioneer = db.global.categoryNames.auctioneer or "Auctioneer"
+    db.global.categoryNames.bankAlt    = db.global.categoryNames.bankAlt    or "Bank Alt"
     
     if db.global.minimapAngle then
         db.global.minimapPos = db.global.minimapAngle
@@ -233,27 +245,15 @@ end
 
 function Data:GetDefaultTarget(charType)
     if not db or not db.global then return 1000000 end
-    if charType == "main" then
-        return db.global.mainDefault or 1000000
-    elseif charType == "mainAlt" then
-        return db.global.mainAltDefault or 1000000
-    elseif charType == "alt" then
-        return db.global.altDefault or 1000000
-    end
-    return 1000000
+    local key = charType .. "Default"
+    return db.global[key] or 1000000
 end
 
 function Data:SetDefaultTarget(charType, amount)
     if not db then return end
     amount = math.max(0, tonumber(amount) or 0)
     db.global = db.global or {}
-    if charType == "main" then
-        db.global.mainDefault = amount
-    elseif charType == "mainAlt" then
-        db.global.mainAltDefault = amount
-    elseif charType == "alt" then
-        db.global.altDefault = amount
-    end
+    db.global[charType .. "Default"] = amount
 end
 
 function Data:GetCharacterType(charID)
@@ -266,7 +266,8 @@ function Data:SetCharacterType(charID, charType)
     charID = charID or GetCharacterFullName()
     if not db or not db.characters or not db.characters[charID] then return end
     
-    if charType ~= "main" and charType ~= "mainAlt" and charType ~= "alt" then
+    local valid = { main=true, mainAlt=true, alt=true, crafter=true, auctioneer=true, bankAlt=true }
+    if not valid[charType] then
         charType = nil
     end
     
@@ -508,9 +509,9 @@ function Data:ShouldShowGuildBankFeatures()
     return self:IsGuildMaster()
 end
 
--- ── Weekly Income Tracking ────────────────────────────────────────────────────
+-- -- Weekly Income Tracking ----------------------------------------------------
 -- Weekly Income = Bank balance now - Bank balance at last reset.
--- Both values come from the ledger's balanceAfter field — no live API needed.
+-- Both values come from the ledger's balanceAfter field -- no live API needed.
 -- The most recent entry before the reset = balance at reset.
 -- The most recent entry overall = current balance.
 
@@ -557,8 +558,23 @@ function Data:GetWeeklyResetTimestamp()
     return GetCurrentResetTimestamp()
 end
 
--- ─────────────────────────────────────────────────────────────────────────────
+-- -----------------------------------------------------------------------------
 
+
+function Data:GetCategoryName(charType)
+    if not db or not db.global or not db.global.categoryNames then return charType end
+    return db.global.categoryNames[charType] or charType
+end
+
+function Data:SetCategoryName(charType, name)
+    if not db or not db.global then return end
+    db.global.categoryNames = db.global.categoryNames or {}
+    db.global.categoryNames[charType] = name or charType
+end
+
+function Data:GetAllCategoryKeys()
+    return { "main", "mainAlt", "alt", "crafter", "auctioneer", "bankAlt" }
+end
 
 function Data:GetCurrentAddonVersion()
     return CURRENT_ADDON_VERSION

@@ -1,254 +1,1391 @@
 local ADDON_NAME, WarbandAccountant = ...
-local Core = WarbandAccountant.Core
-
 local UI = {}
 WarbandAccountant.UI = UI
 
-local mainFrame = nil
-local ledgerFrame = nil
-local minimapLDB = nil
-local ledgerCharFilter = nil  -- nil = show all, or charID string to filter
+-- -- Constants -----------------------------------------------------------------
+local NAV_W         = 150
+local WIN_W         = 1100
+local WIN_H         = 660
+local CONTENT_X     = NAV_W + 12
+local CONTENT_W     = WIN_W - NAV_W - 28
+local CONTENT_H     = WIN_H - 54
+local NAV_BTN_H     = 40
+local ROW_H         = 28
+
+local COLOR_GOLD    = { r=1,    g=0.82, b=0    }
+local COLOR_GREEN   = { r=0.2,  g=1,    b=0.2  }
+local COLOR_RED     = { r=1,    g=0.3,  b=0.3  }
+local COLOR_GREY    = { r=0.6,  g=0.6,  b=0.6  }
+local COLOR_WHITE   = { r=1,    g=1,    b=1    }
+
+
+-- -- State ---------------------------------------------------------------------
+local mainFrame        = nil
+local activeTab        = "overview"
+local ledgerCharFilter = nil
+local minimapLDB       = nil
 
 local hasLibDBIcon = LibStub and LibStub("LibDBIcon-1.0", true)
-local hasLDB = LibStub and LibStub("LibDataBroker-1.1", true)
+local hasLDB       = LibStub and LibStub("LibDataBroker-1.1", true)
 
+-- -- Utility -------------------------------------------------------------------
 local function FormatGoldShort(copper)
     if not copper then return "0g" end
-    local absCopper = math.abs(copper)
-    if absCopper >= 10000 then
-        return string.format("%.1fg", copper / 10000)
-    elseif absCopper >= 100 then
-        return string.format("%.1fs", copper / 100)
+    local abs = math.abs(copper)
+    local sign = copper < 0 and "-" or ""
+    if abs >= 10000 then
+        return string.format("%s%.1fg", sign, abs / 10000)
+    elseif abs >= 100 then
+        return string.format("%s%.1fs", sign, abs / 100)
     else
-        return string.format("%dc", copper)
+        return string.format("%s%dc", sign, abs)
     end
 end
 
-local function FormatTimestamp(timestamp)
-    if not timestamp then return "" end
-    local dateTable = date("*t", timestamp)
-    return string.format("%02d/%02d %02d:%02d", dateTable.month, dateTable.day, dateTable.hour, dateTable.min)
+local function FormatTimestamp(ts)
+    if not ts then return "" end
+    local d = date("*t", ts)
+    return string.format("%02d/%02d %02d:%02d", d.month, d.day, d.hour, d.min)
 end
 
+local function MakeLabel(parent, text, fontObj, x, y, w, color)
+    local fs = parent:CreateFontString(nil, "OVERLAY", fontObj or "GameFontNormal")
+    if x and y then fs:SetPoint("TOPLEFT", x, y) end
+    if w then fs:SetWidth(w) end
+    if color then fs:SetTextColor(color.r, color.g, color.b) end
+    if text then fs:SetText(text) end
+    return fs
+end
+
+local function MakeSeparator(parent, yOff)
+    local sep = parent:CreateTexture(nil, "ARTWORK")
+    sep:SetColorTexture(0.3, 0.3, 0.3, 0.6)
+    sep:SetHeight(1)
+    sep:SetPoint("TOPLEFT",  parent, "TOPLEFT",  0, yOff)
+    sep:SetPoint("TOPRIGHT", parent, "TOPRIGHT", 0, yOff)
+    return sep
+end
+
+-- -- Nav button builder --------------------------------------------------------
+local navButtons = {}
+
+local function CreateNavButton(parent, label, tabKey, yPoint, anchorTo, anchorSide)
+    local btn = CreateFrame("Button", nil, parent)
+    btn:SetSize(NAV_W, NAV_BTN_H)
+    if anchorTo then
+        btn:SetPoint(anchorSide or "TOP", anchorTo, "BOTTOM", 0, 0)
+    else
+        btn:SetPoint("TOPLEFT", parent, "TOPLEFT", 0, yPoint or 0)
+    end
+
+    -- Active accent bar
+    local accent = btn:CreateTexture(nil, "ARTWORK")
+    accent:SetWidth(3)
+    accent:SetPoint("TOPLEFT", 0, 0)
+    accent:SetPoint("BOTTOMLEFT", 0, 0)
+    accent:SetColorTexture(COLOR_GOLD.r, COLOR_GOLD.g, COLOR_GOLD.b, 1)
+    accent:Hide()
+    btn.accent = accent
+
+    -- Background
+    local bg = btn:CreateTexture(nil, "BACKGROUND")
+    bg:SetAllPoints()
+    bg:SetColorTexture(0, 0, 0, 0)
+    btn.bg = bg
+
+    -- Highlight
+    local hl = btn:CreateTexture(nil, "HIGHLIGHT")
+    hl:SetAllPoints()
+    hl:SetColorTexture(1, 1, 1, 0.06)
+
+    -- Label
+    local fs = btn:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    fs:SetPoint("LEFT", 18, 0)
+    fs:SetText(label)
+    fs:SetTextColor(COLOR_GREY.r, COLOR_GREY.g, COLOR_GREY.b)
+    btn.label = fs
+
+    function btn:SetActive(isActive)
+        if isActive then
+            self.accent:Show()
+            self.bg:SetColorTexture(0.12, 0.10, 0.04, 0.9)
+            self.label:SetTextColor(COLOR_GOLD.r, COLOR_GOLD.g, COLOR_GOLD.b)
+            self.label:SetFontObject("GameFontHighlight")
+        else
+            self.accent:Hide()
+            self.bg:SetColorTexture(0, 0, 0, 0)
+            self.label:SetTextColor(COLOR_GREY.r, COLOR_GREY.g, COLOR_GREY.b)
+            self.label:SetFontObject("GameFontNormal")
+        end
+    end
+
+    btn:SetScript("OnClick", function()
+        UI:SwitchTab(tabKey)
+    end)
+
+    navButtons[tabKey] = btn
+    return btn
+end
+
+-- -- Tab switching -------------------------------------------------------------
+function UI:SwitchTab(tabKey)
+    activeTab = tabKey
+    for key, btn in pairs(navButtons) do
+        btn:SetActive(key == tabKey)
+    end
+    for key, panel in pairs(mainFrame.panels) do
+        if key == tabKey then
+            panel:Show()
+        else
+            panel:Hide()
+        end
+    end
+    -- Refresh content on switch
+    if tabKey == "overview" then
+        UI:RefreshOverview()
+    elseif tabKey == "targets" then
+        UI:RefreshTargets()
+    elseif tabKey == "ledger" then
+        UI:RefreshLedger()
+    elseif tabKey == "changelog" then
+        UI:RefreshChangelog()
+    end
+end
+
+-- -- Stat Card -----------------------------------------------------------------
+local function CreateStatCard(parent, title, x, y, w, h)
+    local card = CreateFrame("Frame", nil, parent, "BackdropTemplate")
+    card:SetSize(w or 200, h or 90)
+    card:SetPoint("TOPLEFT", x, y)
+    card:SetBackdrop({
+        bgFile   = "Interface\\DialogFrame\\UI-DialogBox-Background-Dark",
+        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+        tile = true, tileSize = 16, edgeSize = 12,
+        insets = { left=3, right=3, top=3, bottom=3 }
+    })
+    card:SetBackdropColor(0.08, 0.07, 0.04, 0.95)
+    card:SetBackdropBorderColor(0.35, 0.30, 0.15, 0.8)
+
+    local titleFs = card:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    titleFs:SetPoint("TOPLEFT", 10, -8)
+    titleFs:SetText(title)
+    titleFs:SetTextColor(COLOR_GREY.r, COLOR_GREY.g, COLOR_GREY.b)
+
+    local valueFs = card:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+    valueFs:SetPoint("BOTTOM", 0, 10)
+    valueFs:SetPoint("LEFT",   8, 0)
+    valueFs:SetPoint("RIGHT", -8, 0)
+    valueFs:SetJustifyH("CENTER")
+    valueFs:SetWordWrap(false)
+    valueFs:SetText("--")
+    card.value = valueFs
+
+    return card
+end
+
+-- -- Scrollable content helper -------------------------------------------------
+local function CreateScrollArea(parent, x, y, w, h)
+    local sf = CreateFrame("ScrollFrame", nil, parent, "UIPanelScrollFrameTemplate")
+    sf:SetPoint("TOPLEFT", parent, "TOPLEFT", x, y)
+    sf:SetSize(w - 24, h)
+
+    local sc = CreateFrame("Frame", nil, sf)
+    sc:SetWidth(w - 24)
+    sf:SetScrollChild(sc)
+
+    sf:SetScript("OnMouseWheel", function(self, delta)
+        local cur = self:GetVerticalScroll()
+        local maxScroll = math.max(0, sc:GetHeight() - self:GetHeight())
+        self:SetVerticalScroll(math.max(0, math.min(maxScroll, cur - delta * 60)))
+    end)
+
+    return sf, sc
+end
+
+-- ===============================================================================
+-- OVERVIEW TAB
+-- ===============================================================================
+local overviewCards = {}
+local overviewCharScroll, overviewCharContent
+local overviewGuildText
+
+local function BuildOverviewTab(panel)
+    local cw    = CONTENT_W
+    local cardW = math.floor((cw - 40) / 4)
+    local cardH = 85
+    local cardY = -10
+
+    overviewCards.warband = CreateStatCard(panel, "Warband Bank",      10,               cardY, cardW, cardH)
+    overviewCards.total   = CreateStatCard(panel, "Total Gold",        10 + cardW + 10,  cardY, cardW, cardH)
+    overviewCards.weekly  = CreateStatCard(panel, "This Week",         10 + (cardW+10)*2, cardY, cardW, cardH)
+    overviewCards.session = CreateStatCard(panel, "Session",           10 + (cardW+10)*3, cardY, cardW, cardH)
+
+    -- Guild bank line
+    local guildLabel = panel:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    guildLabel:SetPoint("TOPLEFT", 10, cardY - cardH - 10)
+    guildLabel:SetText("Guild Bank:")
+    guildLabel:SetTextColor(COLOR_GREY.r, COLOR_GREY.g, COLOR_GREY.b)
+
+    overviewGuildText = panel:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+    overviewGuildText:SetPoint("LEFT", guildLabel, "RIGHT", 10, 0)
+    overviewGuildText:SetText("--")
+
+    -- Character list header
+    local col = { name=10, realm=180, current=340, target=490, diff=640 }
+    local scrollH = CONTENT_H - cardH - 80
+    local hdrY = cardY - cardH - 44
+
+    local function Hdr(txt, x)
+        local fs = panel:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        fs:SetPoint("TOPLEFT", panel, "TOPLEFT", x, hdrY)
+        fs:SetText(txt)
+        fs:SetTextColor(COLOR_GOLD.r, COLOR_GOLD.g, COLOR_GOLD.b)
+        return fs
+    end
+    Hdr("Character",   col.name)
+    Hdr("Realm",       col.realm)
+    Hdr("Current",     col.current)
+    Hdr("Target",      col.target)
+    Hdr("+/- Target",  col.diff)
+
+    MakeSeparator(panel, hdrY - 16)
+    overviewCharScroll, overviewCharContent = CreateScrollArea(panel, 0, hdrY - 24, CONTENT_W, scrollH)
+    panel._overviewCol = col
+end
+
+function UI:RefreshOverview()
+    if not mainFrame or not mainFrame.panels.overview then return end
+    local Data = WarbandAccountant.Data
+
+    -- Stat cards
+    local warbandGold = WarbandAccountant.Core:GetWarbandGold()
+    overviewCards.warband.value:SetText(WarbandAccountant.FormatGold(warbandGold))
+    overviewCards.warband.value:SetTextColor(COLOR_GOLD.r, COLOR_GOLD.g, COLOR_GOLD.b)
+
+    local totalGold = Data:GetTotalTrackedGold()
+    overviewCards.total.value:SetText(WarbandAccountant.FormatGold(totalGold))
+    overviewCards.total.value:SetTextColor(COLOR_WHITE.r, COLOR_WHITE.g, COLOR_WHITE.b)
+
+    local weekly = Data:GetWeeklyIncome()
+    local wc = weekly >= 0 and COLOR_GREEN or COLOR_RED
+    local ws = weekly >= 0 and "+" or ""
+    overviewCards.weekly.value:SetText(ws .. WarbandAccountant.FormatGold(weekly))
+    overviewCards.weekly.value:SetTextColor(wc.r, wc.g, wc.b)
+
+    local session = Data:GetTotalSessionChange()
+    local sc2 = session >= 0 and COLOR_GREEN or COLOR_RED
+    local ss = session >= 0 and "+" or ""
+    overviewCards.session.value:SetText(ss .. WarbandAccountant.FormatGold(session))
+    overviewCards.session.value:SetTextColor(sc2.r, sc2.g, sc2.b)
+
+    -- Guild bank
+    local guildGold, guildName = WarbandAccountant.Core:GetGuildBankGold()
+    if guildGold and guildGold > 0 then
+        overviewGuildText:SetText("|cFF00FF00" .. (guildName or "?") .. "|r  " .. WarbandAccountant.FormatGold(guildGold))
+    else
+        overviewGuildText:SetText("|cFF666666None tracked|r")
+    end
+
+    -- Character rows
+    local col = mainFrame.panels.overview._overviewCol
+    if overviewCharContent._rows then
+        for _, r in ipairs(overviewCharContent._rows) do r:Hide() end
+    end
+    overviewCharContent._rows = {}
+
+    local characters = Data:GetAllCharacters()
+    local charList = {}
+    local currentRealm = GetRealmName()
+    for id, d in pairs(characters) do
+        table.insert(charList, { id=id, name=d.name, realm=d.realm, class=d.class,
+            current=d.currentGold or 0, target=d.targetGold or 0,
+            paused=d.paused, charType=d.charType, sortOrder=d.sortOrder or 0 })
+    end
+    table.sort(charList, function(a,b) return a.sortOrder < b.sortOrder end)
+
+    local yOff = 0
+    for i, c in ipairs(charList) do
+        local row = CreateFrame("Frame", nil, overviewCharContent)
+        row:SetSize(CONTENT_W - 30, ROW_H)
+        row:SetPoint("TOPLEFT", 0, yOff)
+
+        if i % 2 == 0 then
+            local bg = row:CreateTexture(nil, "BACKGROUND")
+            bg:SetAllPoints()
+            bg:SetColorTexture(0.15, 0.14, 0.10, 0.4)
+        end
+
+        local clr = RAID_CLASS_COLORS and RAID_CLASS_COLORS[c.class] or COLOR_WHITE
+        local nameStr = c.name
+        if c.paused then nameStr = nameStr .. " |cFFFF4444[P]|r" end
+
+        local nameFs = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        nameFs:SetPoint("LEFT", col.name, 0)
+        nameFs:SetWidth(160)
+        nameFs:SetJustifyH("LEFT")
+        nameFs:SetText(nameStr)
+        nameFs:SetTextColor(clr.r, clr.g, clr.b)
+
+        local realmFs = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        realmFs:SetPoint("LEFT", col.realm, 0)
+        realmFs:SetWidth(150)
+        realmFs:SetJustifyH("LEFT")
+        realmFs:SetText(c.realm .. (c.realm ~= currentRealm and " (*)" or ""))
+        realmFs:SetTextColor(COLOR_GREY.r, COLOR_GREY.g, COLOR_GREY.b)
+
+        local curFs = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        curFs:SetPoint("LEFT", col.current, 0)
+        curFs:SetWidth(140)
+        curFs:SetJustifyH("LEFT")
+        curFs:SetText(WarbandAccountant.FormatGold(c.current))
+        if c.current < c.target then
+            curFs:SetTextColor(COLOR_RED.r, COLOR_RED.g, COLOR_RED.b)
+        elseif c.current > c.target then
+            curFs:SetTextColor(COLOR_GREEN.r, COLOR_GREEN.g, COLOR_GREEN.b)
+        else
+            curFs:SetTextColor(COLOR_WHITE.r, COLOR_WHITE.g, COLOR_WHITE.b)
+        end
+
+        local tgtFs = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        tgtFs:SetPoint("LEFT", col.target, 0)
+        tgtFs:SetWidth(140)
+        tgtFs:SetJustifyH("LEFT")
+        tgtFs:SetText(WarbandAccountant.FormatGold(c.target))
+        tgtFs:SetTextColor(COLOR_GREY.r, COLOR_GREY.g, COLOR_GREY.b)
+
+        local diff = c.current - c.target
+        local diffFs = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        diffFs:SetPoint("LEFT", col.diff, 0)
+        diffFs:SetWidth(140)
+        diffFs:SetJustifyH("LEFT")
+        local diffSign = diff >= 0 and "+" or ""
+        diffFs:SetText(diffSign .. WarbandAccountant.FormatGold(diff))
+        if diff > 0 then diffFs:SetTextColor(COLOR_GREEN.r, COLOR_GREEN.g, COLOR_GREEN.b)
+        elseif diff < 0 then diffFs:SetTextColor(COLOR_RED.r, COLOR_RED.g, COLOR_RED.b)
+        else diffFs:SetTextColor(COLOR_GREY.r, COLOR_GREY.g, COLOR_GREY.b) end
+
+        table.insert(overviewCharContent._rows, row)
+        yOff = yOff - ROW_H
+    end
+    overviewCharContent:SetHeight(math.max(300, math.abs(yOff)))
+end
+
+-- ===============================================================================
+-- TARGETS TAB
+-- ===============================================================================
+local targetsScrollContent
+local targetRows = {}
+
+local function BuildTargetsTab(panel)
+    local col = {
+        reorder   = 8,
+        character = 52,
+        realm     = 192,
+        main      = 308,
+        target    = 458,
+        current   = 598,
+        paused    = 738,
+        delete    = 800,
+    }
+    panel._col = col
+
+    -- Header row on panel, separator below it, scroll frame starts after
+    local function Hdr(txt, x, w)
+        local fs = panel:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        fs:SetPoint("TOPLEFT", panel, "TOPLEFT", x, -10)
+        fs:SetText(txt)
+        fs:SetTextColor(COLOR_GOLD.r, COLOR_GOLD.g, COLOR_GOLD.b)
+        if w then fs:SetWidth(w) end
+        return fs
+    end
+    Hdr("Character", col.character)
+    Hdr("Realm",     col.realm)
+    Hdr("Type",      col.main)
+    Hdr("Target",    col.target)
+    Hdr("Current",   col.current)
+    Hdr("Pause",     col.paused)
+    Hdr("Delete",    col.delete)
+
+    MakeSeparator(panel, -28)
+
+    local sf, sc = CreateScrollArea(panel, 0, -36, CONTENT_W, CONTENT_H - 36)
+    targetsScrollContent = sc
+    panel._targetsScroll = sf
+end
+
+function UI:RefreshTargets()
+    if not mainFrame or not targetsScrollContent then return end
+    local Data  = WarbandAccountant.Data
+    local panel = mainFrame.panels.targets
+    local col = panel._col
+
+    for _, r in ipairs(targetRows) do if r then r:Hide() end end
+    wipe(targetRows)
+
+    local characters = Data:GetAllCharacters()
+    local charList = {}
+    for id, d in pairs(characters) do
+        table.insert(charList, { id=id, name=d.name, realm=d.realm, class=d.class,
+            currentGold=d.currentGold or 0, targetGold=d.targetGold or 0,
+            paused=d.paused, charType=d.charType, sortOrder=d.sortOrder or 0 })
+    end
+    table.sort(charList, function(a,b) return a.sortOrder < b.sortOrder end)
+
+    local currentCharID = Data:GetCurrentCharacterID()
+    local yOff = 0
+
+    for i, char in ipairs(charList) do
+        local row = CreateFrame("Frame", nil, targetsScrollContent)
+        row:SetSize(CONTENT_W - 44, 40)
+        row:SetPoint("TOPLEFT", 0, yOff)
+
+        if i % 2 == 0 then
+            local bg = row:CreateTexture(nil, "BACKGROUND")
+            bg:SetAllPoints()
+            bg:SetColorTexture(0.15, 0.14, 0.10, 0.4)
+        end
+
+        -- Reorder: arrows or number input based on sort mode
+        local sortMode = Data:GetSortMode()
+        if sortMode == "number" then
+            local orderEdit = CreateFrame("EditBox", nil, row, "InputBoxTemplate")
+            orderEdit:SetSize(36, 22)
+            orderEdit:SetPoint("LEFT", col.reorder, 0)
+            orderEdit:SetAutoFocus(false)
+            orderEdit:SetNumeric(true)
+            orderEdit:SetMaxLetters(3)
+            orderEdit:SetJustifyH("CENTER")
+            orderEdit:SetText(tostring(i))
+            orderEdit:SetScript("OnEnterPressed", function(self)
+                local newPos = tonumber(self:GetText())
+                if newPos and newPos >= 1 and newPos <= #charList and newPos ~= i then
+                    local moved = table.remove(charList, i)
+                    table.insert(charList, newPos, moved)
+                    for idx, ch in ipairs(charList) do
+                        Data:SetCharacterSortOrder(ch.id, idx)
+                    end
+                    UI:RefreshTargets()
+                else
+                    self:SetText(tostring(i))
+                    self:ClearFocus()
+                end
+            end)
+            orderEdit:SetScript("OnEditFocusLost", function(self)
+                self:SetText(tostring(i))
+            end)
+        else
+            local upBtn = CreateFrame("Button", nil, row)
+            upBtn:SetSize(16, 16)
+            upBtn:SetPoint("LEFT", col.reorder, 4)
+            local upTex = upBtn:CreateTexture(nil, "ARTWORK")
+            upTex:SetAllPoints()
+            upTex:SetTexture("Interface\\Buttons\\UI-ScrollBar-ScrollUpButton-Up")
+            upTex:SetTexCoord(0.25, 0.75, 0.25, 0.75)
+            upBtn:SetNormalTexture(upTex)
+            upBtn:SetHighlightTexture("Interface\\Buttons\\UI-Common-MouseHilight", "ADD")
+            if i > 1 then
+                upBtn:SetScript("OnClick", function()
+                    Data:SwapCharacterOrder(char.id, charList[i-1].id)
+                    UI:RefreshTargets()
+                end)
+            else upBtn:Disable() end
+
+            local downBtn = CreateFrame("Button", nil, row)
+            downBtn:SetSize(16, 16)
+            downBtn:SetPoint("TOP", upBtn, "BOTTOM", 0, 2)
+            local downTex = downBtn:CreateTexture(nil, "ARTWORK")
+            downTex:SetAllPoints()
+            downTex:SetTexture("Interface\\Buttons\\UI-ScrollBar-ScrollDownButton-Up")
+            downTex:SetTexCoord(0.25, 0.75, 0.25, 0.75)
+            downBtn:SetNormalTexture(downTex)
+            downBtn:SetHighlightTexture("Interface\\Buttons\\UI-Common-MouseHilight", "ADD")
+            if i < #charList then
+                downBtn:SetScript("OnClick", function()
+                    Data:SwapCharacterOrder(char.id, charList[i+1].id)
+                    UI:RefreshTargets()
+                end)
+            else downBtn:Disable() end
+        end
+
+        -- Name
+        local clr = RAID_CLASS_COLORS and RAID_CLASS_COLORS[char.class] or COLOR_WHITE
+        local nameFs = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        nameFs:SetPoint("LEFT", col.character, 0)
+        nameFs:SetWidth(130)
+        nameFs:SetJustifyH("LEFT")
+        nameFs:SetText(char.name)
+        nameFs:SetTextColor(clr.r, clr.g, clr.b)
+
+        -- Realm
+        local realmFs = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        realmFs:SetPoint("LEFT", col.realm, 0)
+        realmFs:SetWidth(100)
+        realmFs:SetJustifyH("LEFT")
+        realmFs:SetText(char.realm)
+        realmFs:SetTextColor(COLOR_GREY.r, COLOR_GREY.g, COLOR_GREY.b)
+
+        -- Character type dropdown
+        local currentType = Data:GetCharacterType(char.id)
+        local typeDD = CreateFrame("Frame", "WBATypeDD_" .. i, row, "UIDropDownMenuTemplate")
+        typeDD:SetPoint("LEFT", col.main - 16, 0)
+        UIDropDownMenu_SetWidth(typeDD, 120)
+        local displayName = currentType and Data:GetCategoryName(currentType) or "(None)"
+        UIDropDownMenu_SetText(typeDD, displayName)
+        UIDropDownMenu_Initialize(typeDD, function()
+            local info = UIDropDownMenu_CreateInfo()
+            info.text    = "(None)"
+            info.arg1    = nil
+            info.checked = (currentType == nil)
+            info.func    = function()
+                Data:SetCharacterType(char.id, nil)
+                UIDropDownMenu_SetText(typeDD, "(None)")
+                UI:UpdateTooltip()
+            end
+            UIDropDownMenu_AddButton(info)
+            for _, key in ipairs(Data:GetAllCategoryKeys()) do
+                info = UIDropDownMenu_CreateInfo()
+                info.text    = Data:GetCategoryName(key)
+                info.arg1    = key
+                info.checked = (currentType == key)
+                info.func    = function(btn, arg1)
+                    Data:SetCharacterType(char.id, arg1)
+                    UIDropDownMenu_SetText(typeDD, btn:GetText())
+                    UI:RefreshTargets()
+                    UI:UpdateTooltip()
+                end
+                UIDropDownMenu_AddButton(info)
+            end
+        end)
+
+        -- Target editbox
+        local tgtEdit = CreateFrame("EditBox", nil, row, "InputBoxTemplate")
+        tgtEdit:SetSize(90, 22)
+        tgtEdit:SetPoint("LEFT", col.target, 0)
+        tgtEdit:SetAutoFocus(false)
+        tgtEdit:SetNumeric(true)
+        tgtEdit:SetMaxLetters(7)
+        tgtEdit:SetText(tostring(math.floor(char.targetGold / 10000)))
+        tgtEdit:SetJustifyH("RIGHT")
+        tgtEdit:SetTextInsets(2, 6, 0, 0)
+        local gLabel = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        gLabel:SetPoint("LEFT", tgtEdit, "RIGHT", 4, 0)
+        gLabel:SetText("g")
+        gLabel:SetTextColor(COLOR_GOLD.r, COLOR_GOLD.g, COLOR_GOLD.b)
+        local function SaveTarget(self)
+            Data:SetCharacterTarget(char.id, (tonumber(self:GetText()) or 0) * 10000)
+            UI:RefreshTargets()
+        end
+        tgtEdit:SetScript("OnEnterPressed", function(self) self:ClearFocus(); SaveTarget(self) end)
+        tgtEdit:SetScript("OnEditFocusLost", SaveTarget)
+
+        -- Current gold
+        local curFs = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        curFs:SetPoint("LEFT", col.current, 0)
+        curFs:SetWidth(130)
+        curFs:SetJustifyH("LEFT")
+        curFs:SetText(WarbandAccountant.FormatGold(char.currentGold))
+        if char.currentGold < char.targetGold then
+            curFs:SetTextColor(COLOR_RED.r, COLOR_RED.g, COLOR_RED.b)
+        elseif char.currentGold > char.targetGold then
+            curFs:SetTextColor(COLOR_GREEN.r, COLOR_GREEN.g, COLOR_GREEN.b)
+        else
+            curFs:SetTextColor(COLOR_WHITE.r, COLOR_WHITE.g, COLOR_WHITE.b)
+        end
+
+        -- Pause checkbox
+        local pauseCb = CreateFrame("CheckButton", nil, row, "UICheckButtonTemplate")
+        pauseCb:SetSize(24, 24)
+        pauseCb:SetPoint("LEFT", col.paused, 0)
+        pauseCb:SetChecked(char.paused)
+        pauseCb:SetScript("OnClick", function(self)
+            local d = Data:GetCharacterData(char.id)
+            if d then d.paused = self:GetChecked() end
+            UI:UpdateTooltip()
+        end)
+        pauseCb:SetScript("OnEnter", function(self)
+            GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+            GameTooltip:SetText("Pause Automation")
+            GameTooltip:AddLine("Skip auto-deposit/withdraw for this character", 1, 1, 1, true)
+            GameTooltip:Show()
+        end)
+        pauseCb:SetScript("OnLeave", function() GameTooltip:Hide() end)
+
+        -- Delete button (not for current char)
+        if char.id ~= currentCharID then
+            local delBtn = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
+            delBtn:SetSize(50, 22)
+            delBtn:SetPoint("LEFT", col.delete, 0)
+            delBtn:SetText("Delete")
+            local regs = {delBtn:GetRegions()}
+            for _, reg in ipairs(regs) do
+                if reg:GetObjectType() == "Texture" then
+                    reg:SetVertexColor(0.8, 0.1, 0.1, 1)
+                end
+            end
+            delBtn:SetScript("OnClick", function()
+                StaticPopup_Show("WARBANDACCOUNTANT_DELETE_CHARACTER", char.name, nil, char.id)
+            end)
+            delBtn:SetScript("OnEnter", function(self)
+                GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+                GameTooltip:SetText("Delete Character")
+                GameTooltip:AddLine("Remove from tracking |cFFFF0000(cannot be undone)|r", 1, 1, 1, true)
+                GameTooltip:Show()
+            end)
+            delBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
+        end
+
+        table.insert(targetRows, row)
+        yOff = yOff - 40
+    end
+    targetsScrollContent:SetHeight(math.max(300, math.abs(yOff)))
+end
+
+-- ===============================================================================
+-- LEDGER TAB
+-- ===============================================================================
+local ledgerScrollContent
+local ledgerRows = {}
+local ledgerStatsText
+local ledgerFilterDropdown
+
+local function BuildLedgerTab(panel)
+    local col = { time=10, char=105, type=240, amount=360, balance=520, note=690 }
+    panel._col = col
+
+    -- Row 1: Filter label + dropdown anchored top-right
+    ledgerFilterDropdown = CreateFrame("Frame", "WBALedgerFilterDD", panel, "UIDropDownMenuTemplate")
+    ledgerFilterDropdown:SetPoint("TOPRIGHT", panel, "TOPRIGHT", 8, -4)
+    UIDropDownMenu_SetWidth(ledgerFilterDropdown, 160)
+    UIDropDownMenu_SetText(ledgerFilterDropdown, "All Characters")
+
+    local filterLbl = panel:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    filterLbl:SetPoint("RIGHT", ledgerFilterDropdown, "LEFT", 16, 1)
+    filterLbl:SetText("Filter:")
+    filterLbl:SetTextColor(COLOR_GREY.r, COLOR_GREY.g, COLOR_GREY.b)
+
+    -- Stats text
+    ledgerStatsText = panel:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    ledgerStatsText:SetPoint("TOPLEFT", 10, -8)
+    ledgerStatsText:SetPoint("TOPRIGHT", panel, "TOPRIGHT", -220, -8)
+    ledgerStatsText:SetJustifyH("LEFT")
+
+    local function InitFilter()
+        UIDropDownMenu_Initialize(ledgerFilterDropdown, function()
+            local info = UIDropDownMenu_CreateInfo()
+            info.text    = "All Characters"
+            info.checked = (ledgerCharFilter == nil)
+            info.func    = function()
+                ledgerCharFilter = nil
+                UIDropDownMenu_SetText(ledgerFilterDropdown, "All Characters")
+                UI:RefreshLedger()
+            end
+            UIDropDownMenu_AddButton(info)
+
+            local Data = WarbandAccountant.Data
+            local chars = {}
+            for id, d in pairs(Data:GetAllCharacters()) do
+                table.insert(chars, { id=id, name=d.name, realm=d.realm })
+            end
+            table.sort(chars, function(a,b) return a.name < b.name end)
+            for _, c in ipairs(chars) do
+                local disp = c.name .. (c.realm ~= GetRealmName() and " (*)" or "")
+                info = UIDropDownMenu_CreateInfo()
+                info.text    = disp
+                info.arg1    = c.id
+                info.checked = (ledgerCharFilter == c.id)
+                info.func    = function(btn, arg1)
+                    ledgerCharFilter = arg1
+                    UIDropDownMenu_SetText(ledgerFilterDropdown, btn:GetText())
+                    UI:RefreshLedger()
+                end
+                UIDropDownMenu_AddButton(info)
+            end
+        end)
+    end
+    ledgerFilterDropdown:SetScript("OnShow", InitFilter)
+    InitFilter()
+
+    -- Header row on panel at fixed y, separator, then scroll
+    local function Hdr(txt, x)
+        local fs = panel:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        fs:SetPoint("TOPLEFT", panel, "TOPLEFT", x, -72)
+        fs:SetText(txt)
+        fs:SetTextColor(COLOR_GOLD.r, COLOR_GOLD.g, COLOR_GOLD.b)
+        return fs
+    end
+    Hdr("Time",         col.time)
+    Hdr("Character",    col.char)
+    Hdr("Type",         col.type)
+    Hdr("Amount",       col.amount)
+    Hdr("Warband Bank", col.balance)
+    Hdr("Note",         col.note)
+
+    MakeSeparator(panel, -88)
+
+    local lsf, lsc = CreateScrollArea(panel, 0, -96, CONTENT_W + 4, CONTENT_H - 100)
+    ledgerScrollContent = lsc
+end
+
+function UI:RefreshLedger()
+    if not mainFrame or not ledgerScrollContent then return end
+    local Data = WarbandAccountant.Data
+
+    -- Clear rows
+    for _, r in ipairs(ledgerRows) do if r then r:Hide() end end
+    wipe(ledgerRows)
+
+    -- Stats
+    local dep, wdr = Data:GetTotalLedgerStats()
+    local made = dep - wdr
+    local madeCol  = made >= 0 and "|cFF33FF33" or "|cFFFF4444"
+    local madeSign = made >= 0 and "+" or ""
+    local wIncome  = Data:GetWeeklyIncome()
+    local wCol     = wIncome >= 0 and "|cFF33FF33" or "|cFFFF4444"
+    local wSign    = wIncome >= 0 and "+" or ""
+    ledgerStatsText:SetText(string.format(
+        "Dep: |cFF33FF33%s|r   Wdr: |cFFFF4444%s|r   Net: %s%s%s|r   Week: %s%s%s|r",
+        WarbandAccountant.FormatGold(dep), WarbandAccountant.FormatGold(wdr),
+        madeCol, madeSign, WarbandAccountant.FormatGold(made),
+        wCol, wSign, WarbandAccountant.FormatGold(wIncome)))
+
+    -- Entries
+    local allEntries = Data:GetLedgerEntries(500)
+    local entries = {}
+    for _, e in ipairs(allEntries) do
+        if ledgerCharFilter == nil or e.character == ledgerCharFilter then
+            table.insert(entries, e)
+            if #entries >= 200 then break end
+        end
+    end
+
+    local panel = mainFrame.panels.ledger
+    -- Recompute dynamic columns
+    local col = panel._col
+
+    if #entries == 0 then
+        local empty = ledgerScrollContent:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+        empty:SetPoint("CENTER", 0, 0)
+        empty:SetText(ledgerCharFilter and "No transactions for this character." or
+            "No transactions yet.\nOpen your Warband Bank to record transfers.")
+        empty:SetJustifyH("CENTER")
+        ledgerScrollContent:SetHeight(300)
+        return
+    end
+
+    local yOff = 0
+    for i, e in ipairs(entries) do
+        local row = CreateFrame("Frame", nil, ledgerScrollContent)
+        row:SetSize(CONTENT_W - 20, 24)
+        row:SetPoint("TOPLEFT", 0, yOff)
+
+        if i % 2 == 0 then
+            local bg = row:CreateTexture(nil, "BACKGROUND")
+            bg:SetAllPoints()
+            bg:SetColorTexture(0.15, 0.14, 0.10, 0.35)
+        end
+
+        local timeFs = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        timeFs:SetPoint("LEFT", col.time, 0)
+        timeFs:SetJustifyH("LEFT")
+        timeFs:SetText(FormatTimestamp(e.timestamp))
+        timeFs:SetTextColor(COLOR_GREY.r, COLOR_GREY.g, COLOR_GREY.b)
+
+        local charFs = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        charFs:SetPoint("LEFT", col.char, 0)
+        charFs:SetWidth(140)
+        charFs:SetJustifyH("LEFT")
+        charFs:SetText(e.characterName or "Unknown")
+
+        local typeFs = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        typeFs:SetPoint("LEFT", col.type, 0)
+        local isDeposit = (e.type == "DEPOSIT" or e.type == "MANUAL_DEPOSIT")
+        typeFs:SetJustifyH("LEFT")
+        typeFs:SetText(isDeposit and "Deposit" or "Withdraw")
+        typeFs:SetTextColor(isDeposit and 0.2 or 1, isDeposit and 1 or 0.2, 0.2)
+
+        local amtFs = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        amtFs:SetPoint("LEFT", col.amount, 0)
+        amtFs:SetJustifyH("LEFT")
+        amtFs:SetText(WarbandAccountant.FormatGold(e.amount))
+
+        local balFs = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        balFs:SetPoint("LEFT", col.balance, 0)
+        balFs:SetJustifyH("LEFT")
+        balFs:SetText(WarbandAccountant.FormatGold(e.balanceAfter))
+        balFs:SetTextColor(COLOR_GOLD.r, COLOR_GOLD.g, COLOR_GOLD.b)
+
+        if e.note and e.note ~= "" then
+            local noteFs = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+            noteFs:SetPoint("LEFT", col.note, 0)
+            noteFs:SetWidth(165)
+            noteFs:SetJustifyH("LEFT")
+            noteFs:SetText(e.note)
+            noteFs:SetTextColor(COLOR_GREY.r, COLOR_GREY.g, COLOR_GREY.b)
+        end
+
+        table.insert(ledgerRows, row)
+        yOff = yOff - 24
+    end
+    ledgerScrollContent:SetHeight(math.max(300, math.abs(yOff)))
+end
+
+-- ===============================================================================
+-- SETTINGS TAB
+-- ===============================================================================
+local function BuildSettingsTab(panel)
+    local Data = WarbandAccountant.Data
+    local cw = CONTENT_W
+    local y  = -15
+
+    -- Helper: section box
+    local function Section(title, sx, sy, sw, sh)
+        local box = CreateFrame("Frame", nil, panel, "BackdropTemplate")
+        box:SetSize(sw, sh)
+        box:SetPoint("TOPLEFT", sx, sy)
+        box:SetBackdrop({
+            bgFile   = "Interface\\DialogFrame\\UI-DialogBox-Background-Dark",
+            edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+            tile=true, tileSize=16, edgeSize=12,
+            insets={ left=3, right=3, top=3, bottom=3 }
+        })
+        box:SetBackdropColor(0.06, 0.05, 0.03, 0.95)
+        box:SetBackdropBorderColor(0.35, 0.30, 0.15, 0.7)
+        local hdr = box:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        hdr:SetPoint("TOPLEFT", 10, -8)
+        hdr:SetText(title)
+        hdr:SetTextColor(COLOR_GOLD.r, COLOR_GOLD.g, COLOR_GOLD.b)
+        return box
+    end
+
+    -- Helper: checkbox
+    local function MakeCB(parent, label, x, y2, getter, setter)
+        local cb = CreateFrame("CheckButton", nil, parent, "UICheckButtonTemplate")
+        cb:SetSize(24, 24)
+        cb:SetPoint("TOPLEFT", x, y2)
+        cb:SetChecked(getter())
+        cb.Text:SetText(label)
+        cb.Text:SetFontObject("GameFontHighlightSmall")
+        cb:SetScript("OnClick", function(self) setter(self:GetChecked()) end)
+        return cb
+    end
+
+    local settings = Data:GetSettings()
+    local halfW = math.floor(cw / 2) - 15
+
+    -- -- Automation box ------------------------------------------------------
+    local autoBox = Section("Automation", 10, y, halfW, 130)
+
+    MakeCB(autoBox, "Auto-deposit excess gold to Warband Bank", 10, -28,
+        function() return settings.autoDeposit ~= false end,
+        function(v) settings.autoDeposit = v end)
+    MakeCB(autoBox, "Auto-withdraw gold deficit from Warband Bank", 10, -52,
+        function() return settings.autoWithdraw ~= false end,
+        function(v) settings.autoWithdraw = v end)
+    MakeCB(autoBox, "Require confirmation before transfers", 10, -76,
+        function() return settings.confirmTransfers or false end,
+        function(v) settings.confirmTransfers = v end)
+
+    -- -- Display box ---------------------------------------------------------
+    local dispBox = Section("Display", halfW + 25, y, halfW, 130)
+
+    -- Sort Mode row
+    local sortLbl = dispBox:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    sortLbl:SetPoint("TOPLEFT", 12, -30)
+    sortLbl:SetText("Sort Mode:")
+    sortLbl:SetTextColor(COLOR_GREY.r, COLOR_GREY.g, COLOR_GREY.b)
+
+    local sortDD = CreateFrame("Frame", "WBASortDD", dispBox, "UIDropDownMenuTemplate")
+    sortDD:SetPoint("LEFT", sortLbl, "RIGHT", 4, 0)
+    UIDropDownMenu_SetWidth(sortDD, 130)
+    local curSort = Data:GetSortMode()
+    UIDropDownMenu_SetText(sortDD, curSort == "arrow" and "Arrow Buttons" or "Number Input")
+    UIDropDownMenu_Initialize(sortDD, function()
+        local info = UIDropDownMenu_CreateInfo()
+        info.func = function(btn, arg1)
+            UIDropDownMenu_SetText(sortDD, btn:GetText())
+            Data:SetSortMode(arg1)
+            if activeTab == "targets" then UI:RefreshTargets() end
+        end
+        info.text = "Arrow Buttons"; info.arg1 = "arrow"; info.checked = Data:GetSortMode() == "arrow"
+        UIDropDownMenu_AddButton(info)
+        info = UIDropDownMenu_CreateInfo()
+        info.func = function(btn, arg1)
+            UIDropDownMenu_SetText(sortDD, btn:GetText())
+            Data:SetSortMode(arg1)
+            if activeTab == "targets" then UI:RefreshTargets() end
+        end
+        info.text = "Number Input"; info.arg1 = "number"; info.checked = Data:GetSortMode() == "number"
+        UIDropDownMenu_AddButton(info)
+    end)
+
+    -- Minimap show/hide dropdown
+    local mmLbl = dispBox:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    mmLbl:SetPoint("TOPLEFT", 12, -76)
+    mmLbl:SetText("Show Minimap Button:")
+    mmLbl:SetTextColor(COLOR_GREY.r, COLOR_GREY.g, COLOR_GREY.b)
+
+    local mmDD = CreateFrame("Frame", "WBAMinimapDD", dispBox, "UIDropDownMenuTemplate")
+    mmDD:SetPoint("LEFT", mmLbl, "RIGHT", 4, 0)
+    UIDropDownMenu_SetWidth(mmDD, 70)
+    UIDropDownMenu_SetText(mmDD, settings.hide and "No" or "Yes")
+    UIDropDownMenu_Initialize(mmDD, function()
+        local info = UIDropDownMenu_CreateInfo()
+        info.text = "Yes"; info.arg1 = false
+        info.checked = not settings.hide
+        info.func = function(btn, arg1)
+            settings.hide = arg1
+            UIDropDownMenu_SetText(mmDD, "Yes")
+            UI:ToggleMinimapButton()
+        end
+        UIDropDownMenu_AddButton(info)
+        info = UIDropDownMenu_CreateInfo()
+        info.text = "No"; info.arg1 = true
+        info.checked = settings.hide
+        info.func = function(btn, arg1)
+            settings.hide = arg1
+            UIDropDownMenu_SetText(mmDD, "No")
+            UI:ToggleMinimapButton()
+        end
+        UIDropDownMenu_AddButton(info)
+    end)
+
+    -- -- Category Names + Default Targets ------------------------------------
+    local tgtY   = y - 130
+    local colW   = math.floor((cw - 40) / 2)
+    local rowH   = 28
+    local numRows = 3
+    local tgtBoxH = 46 + (numRows * rowH) + 24  -- header + rows + note
+    local tgtBox = Section("Category Names & Default Targets", 10, tgtY, cw - 20, tgtBoxH)
+
+    local function TgtHdr(txt, x)
+        local fs = tgtBox:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        fs:SetPoint("TOPLEFT", x, -30)
+        fs:SetText(txt)
+        fs:SetTextColor(COLOR_GOLD.r, COLOR_GOLD.g, COLOR_GOLD.b)
+    end
+    TgtHdr("Display Name",  14)
+    TgtHdr("Default Target", 154)
+    TgtHdr("Display Name",  14  + colW)
+    TgtHdr("Default Target", 154 + colW)
+
+    local keys = Data:GetAllCategoryKeys()
+
+    local function MakeCategoryRow(parent, key, col, rowIdx)
+        local bx = col == 0 and 10 or (10 + colW)
+        local by = -50 - (rowIdx * rowH)
+
+        local nameEB = CreateFrame("EditBox", nil, parent, "InputBoxTemplate")
+        nameEB:SetSize(130, 22)
+        nameEB:SetPoint("TOPLEFT", bx, by)
+        nameEB:SetAutoFocus(false)
+        nameEB:SetMaxLetters(20)
+        nameEB:SetText(Data:GetCategoryName(key))
+        nameEB:SetTextInsets(4, 4, 0, 0)
+        local function SaveName(self)
+            local v = self:GetText()
+            if v == "" then v = key; self:SetText(v) end
+            Data:SetCategoryName(key, v)
+        end
+        nameEB:SetScript("OnEnterPressed", function(self) self:ClearFocus(); SaveName(self) end)
+        nameEB:SetScript("OnEditFocusLost", SaveName)
+
+        local goldEB = CreateFrame("EditBox", nil, parent, "InputBoxTemplate")
+        goldEB:SetSize(80, 22)
+        goldEB:SetPoint("LEFT", nameEB, "RIGHT", 8, 0)
+        goldEB:SetAutoFocus(false)
+        goldEB:SetNumeric(true)
+        goldEB:SetMaxLetters(7)
+        goldEB:SetJustifyH("RIGHT")
+        goldEB:SetTextInsets(2, 6, 0, 0)
+        goldEB:SetText(tostring(math.floor((Data:GetDefaultTarget(key) or 0) / 10000)))
+        local gLbl = parent:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        gLbl:SetPoint("LEFT", goldEB, "RIGHT", 2, 0)
+        gLbl:SetText("g")
+        gLbl:SetTextColor(COLOR_GOLD.r, COLOR_GOLD.g, COLOR_GOLD.b)
+        local function SaveGold(self)
+            Data:SetDefaultTarget(key, (tonumber(self:GetText()) or 0) * 10000)
+        end
+        goldEB:SetScript("OnEnterPressed", function(self) self:ClearFocus(); SaveGold(self) end)
+        goldEB:SetScript("OnEditFocusLost", SaveGold)
+    end
+
+    for idx, key in ipairs(keys) do
+        MakeCategoryRow(tgtBox, key, (idx - 1) % 2, math.floor((idx - 1) / 2))
+    end
+
+    local noteFs = tgtBox:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    noteFs:SetPoint("BOTTOMLEFT", 10, 6)
+    noteFs:SetText("Name changes update immediately in dropdowns. Target applies when assigning a type.")
+    noteFs:SetTextColor(COLOR_GREY.r, COLOR_GREY.g, COLOR_GREY.b)
+    noteFs:SetWidth(cw - 40)
+
+    -- -- Danger Zone ----------------------------------------------------------
+    local resetY   = tgtY - tgtBoxH - 12
+    local resetBox = Section("Danger Zone", 10, resetY, cw - 20, 150)
+
+    local function DangerBtn(label, x, yOff, onClick)
+        local btn = CreateFrame("Button", nil, resetBox, "UIPanelButtonTemplate")
+        btn:SetSize(160, 26)
+        btn:SetPoint("TOPLEFT", x, yOff)
+        btn:SetText(label)
+        local regs = {btn:GetRegions()}
+        for _, reg in ipairs(regs) do
+            if reg:GetObjectType() == "Texture" then reg:SetVertexColor(0.7, 0.1, 0.1) end
+        end
+        btn:SetScript("OnClick", onClick)
+        return btn
+    end
+
+    local function DangerDesc(parent, anchor, txt)
+        local fs = parent:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        fs:SetPoint("LEFT", anchor, "RIGHT", 10, 0)
+        fs:SetWidth(cw - 220)
+        fs:SetJustifyH("LEFT")
+        fs:SetText(txt)
+        fs:SetTextColor(COLOR_GREY.r, COLOR_GREY.g, COLOR_GREY.b)
+        return fs
+    end
+
+    local resetBtn = DangerBtn("Reset All Statistics", 10, -28, function()
+        StaticPopup_Show("WARBANDACCOUNTANT_RESET_TOTALS")
+    end)
+    DangerDesc(resetBox, resetBtn, "Clears all-time totals and ledger history.")
+
+    local clearBtn = DangerBtn("Clear Ledger History", 10, -62, function()
+        StaticPopup_Show("WARBANDACCOUNTANT_CLEAR_LEDGER")
+    end)
+    DangerDesc(resetBox, clearBtn, "Removes all transaction history from the Ledger tab.")
+
+    local resetPosBtn = DangerBtn("Reset Window Position", 10, -96, function()
+        if mainFrame then
+            mainFrame:ClearAllPoints()
+            mainFrame:SetPoint("CENTER")
+            local db = Data:GetDB()
+            if db then db.framePositions = nil end
+        end
+        print("|cFF00FF00Warband Accountant:|r Window position reset.")
+    end)
+
+    StaticPopupDialogs["WARBANDACCOUNTANT_RESET_TOTALS"] = {
+        text = "Reset all-time deposit/withdrawal statistics?\n\n|cFFFF0000This cannot be undone.|r",
+        button1 = "Yes", button2 = "No",
+        OnAccept = function()
+            Data:ResetLedgerTotals()
+            print("|cFF00FF00Warband Accountant:|r Statistics reset.")
+        end,
+        timeout = 0, whileDead = true, hideOnEscape = true,
+    }
+
+    StaticPopupDialogs["WARBANDACCOUNTANT_CLEAR_LEDGER"] = {
+        text = "Clear all Warband ledger history?\n\n|cFFFF0000This cannot be undone.|r",
+        button1 = "Yes", button2 = "No",
+        OnAccept = function()
+            Data:ClearLedger()
+            UI:RefreshLedger()
+        end,
+        timeout = 0, whileDead = true, hideOnEscape = true,
+    }
+
+end
+
+-- ===============================================================================
+-- CHANGELOG TAB
+-- ===============================================================================
+local changelogScrollContent
+
+local function BuildChangelogTab(panel)
+    local sf, sc = CreateScrollArea(panel, 0, -10, CONTENT_W, CONTENT_H - 20)
+    changelogScrollContent = sc
+end
+
+function UI:RefreshChangelog()
+    if not changelogScrollContent then return end
+
+    if changelogScrollContent._rows then
+        for _, w in ipairs(changelogScrollContent._rows) do w:Hide() end
+    end
+    changelogScrollContent._rows = {}
+
+    local VERSIONS  = WarbandAccountant.ChangelogVersions or {}
+    local CHANGELOG = WarbandAccountant.Changelog or {}
+    local PAD       = 14
+    local cw        = CONTENT_W - 50
+    local yOff      = -PAD
+
+    local function AddText(fontObj, txt, x, color, wOverride)
+        local fs = changelogScrollContent:CreateFontString(nil, "OVERLAY", fontObj)
+        fs:SetPoint("TOPLEFT", x, yOff)
+        fs:SetWidth(wOverride or (cw - x))
+        fs:SetJustifyH("LEFT")
+        fs:SetText(txt)
+        if color then fs:SetTextColor(color.r, color.g, color.b) end
+        table.insert(changelogScrollContent._rows, fs)
+        return fs
+    end
+
+    for vi, version in ipairs(VERSIONS) do
+        local entries = CHANGELOG[version]
+        if entries then
+            local vh = AddText("GameFontNormalLarge", "Version " .. version, PAD, COLOR_GOLD)
+            yOff = yOff - 22
+
+            local uline = changelogScrollContent:CreateTexture(nil, "ARTWORK")
+            uline:SetColorTexture(COLOR_GOLD.r, COLOR_GOLD.g, COLOR_GOLD.b, 0.25)
+            uline:SetHeight(1)
+            uline:SetPoint("TOPLEFT", PAD, yOff)
+            uline:SetWidth(cw - PAD)
+            table.insert(changelogScrollContent._rows, uline)
+            yOff = yOff - 8
+
+            for _, entry in ipairs(entries) do
+                if entry.tag then
+                    local tagColor
+                    if entry.tag == "New"     then tagColor = "|cFF44FF88"
+                    elseif entry.tag == "Fix" then tagColor = "|cFFFF9944"
+                    else                           tagColor = "|cFF00CCFF" end
+                    local fs = AddText("GameFontHighlight",
+                        tagColor .. "[" .. entry.tag .. "]|r " .. entry.text, PAD)
+                    yOff = yOff - 20
+                else
+                    local fs = AddText("GameFontHighlightSmall", entry.text, PAD + 16, COLOR_GREY)
+                    yOff = yOff - math.max(16, fs:GetStringHeight() + 2)
+                end
+                yOff = yOff - 4
+            end
+
+            if vi < #VERSIONS then yOff = yOff - 12 end
+        end
+    end
+
+    changelogScrollContent:SetHeight(math.max(400, math.abs(yOff) + PAD))
+end
+
+-- ===============================================================================
+-- MAIN WINDOW
+-- ===============================================================================
+local function CreateMainWindow()
+    local f = CreateFrame("Frame", "WarbandAccountantMainFrame", UIParent, "BasicFrameTemplateWithInset")
+    f:SetSize(WIN_W, WIN_H)
+
+    local Data = WarbandAccountant.Data
+    local db   = Data:GetDB()
+    db.framePositions = db.framePositions or {}
+    if db.framePositions.main and db.framePositions.main.point then
+        f:SetPoint(db.framePositions.main.point, db.framePositions.main.x, db.framePositions.main.y)
+    else
+        f:SetPoint("CENTER")
+    end
+
+
+    f:SetMovable(true)
+    f:EnableMouse(true)
+    f:RegisterForDrag("LeftButton")
+    f:SetScript("OnDragStart", f.StartMoving)
+    f:SetScript("OnDragStop", function(self)
+        self:StopMovingOrSizing()
+        local point, _, _, x, y = self:GetPoint(1)
+        db.framePositions.main = { point=point, x=x, y=y }
+    end)
+
+
+    f:SetFrameStrata("HIGH")
+    f:EnableKeyboard(true)
+    f:SetScript("OnKeyDown", function(self, key)
+        if key == "ESCAPE" then self:Hide(); self:SetPropagateKeyboardInput(false)
+        else self:SetPropagateKeyboardInput(true) end
+    end)
+    tinsert(UISpecialFrames, f:GetName())
+
+    f.TitleBg:SetHeight(25)
+    local title = f:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+    title:SetPoint("TOP", f.TitleBg, "TOP", 0, -6)
+    title:SetText("Warband Accountant")
+
+    -- -- Nav panel ------------------------------------------------------------
+    local nav = CreateFrame("Frame", nil, f, "BackdropTemplate")
+    nav:SetSize(NAV_W, WIN_H - 36)
+    nav:SetPoint("TOPLEFT", f, "TOPLEFT", 4, -30)
+    nav:SetBackdrop({
+        bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background-Dark",
+        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+        tile=true, tileSize=16, edgeSize=10,
+        insets={ left=2, right=2, top=2, bottom=2 }
+    })
+    nav:SetBackdropColor(0.06, 0.05, 0.03, 0.98)
+    nav:SetBackdropBorderColor(0.35, 0.30, 0.15, 0.6)
+
+    -- Top nav buttons
+    local btnOverview  = CreateNavButton(nav, "  Overview",  "overview",  -8)
+    local btnTargets   = CreateNavButton(nav, "  Targets",   "targets",   nil, btnOverview)
+    local btnLedger    = CreateNavButton(nav, "  Ledger",    "ledger",    nil, btnTargets)
+
+    -- Bottom nav buttons (anchored from the bottom up)
+    local btnChangelog = CreateFrame("Button", nil, nav)
+    btnChangelog:SetSize(NAV_W, NAV_BTN_H)
+    btnChangelog:SetPoint("BOTTOMLEFT", nav, "BOTTOMLEFT", 0, 4)
+
+    local btnSettings  = CreateFrame("Button", nil, nav)
+    btnSettings:SetSize(NAV_W, NAV_BTN_H)
+    btnSettings:SetPoint("BOTTOM", btnChangelog, "TOP", 0, 0)
+
+    -- Separator between top and bottom groups
+    local navSep = nav:CreateTexture(nil, "ARTWORK")
+    navSep:SetColorTexture(0.3, 0.27, 0.12, 0.5)
+    navSep:SetHeight(1)
+    navSep:SetPoint("BOTTOMLEFT", btnSettings, "TOPLEFT",  0, 0)
+    navSep:SetPoint("BOTTOMRIGHT", btnSettings, "TOPRIGHT", 0, 0)
+
+    -- Style bottom buttons same as top
+    local function StyleBottomBtn(btn, label, tabKey)
+        local accent = btn:CreateTexture(nil, "ARTWORK")
+        accent:SetWidth(3)
+        accent:SetPoint("TOPLEFT", 0, 0)
+        accent:SetPoint("BOTTOMLEFT", 0, 0)
+        accent:SetColorTexture(COLOR_GOLD.r, COLOR_GOLD.g, COLOR_GOLD.b, 1)
+        accent:Hide()
+        btn.accent = accent
+
+        local bg = btn:CreateTexture(nil, "BACKGROUND")
+        bg:SetAllPoints()
+        bg:SetColorTexture(0, 0, 0, 0)
+        btn.bg = bg
+
+        local hl = btn:CreateTexture(nil, "HIGHLIGHT")
+        hl:SetAllPoints()
+        hl:SetColorTexture(1, 1, 1, 0.06)
+
+        local fs = btn:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        fs:SetPoint("LEFT", 18, 0)
+        fs:SetText(label)
+        fs:SetTextColor(COLOR_GREY.r, COLOR_GREY.g, COLOR_GREY.b)
+        btn.label = fs
+
+        function btn:SetActive(isActive)
+            if isActive then
+                self.accent:Show()
+                self.bg:SetColorTexture(0.12, 0.10, 0.04, 0.9)
+                self.label:SetTextColor(COLOR_GOLD.r, COLOR_GOLD.g, COLOR_GOLD.b)
+                self.label:SetFontObject("GameFontHighlight")
+            else
+                self.accent:Hide()
+                self.bg:SetColorTexture(0, 0, 0, 0)
+                self.label:SetTextColor(COLOR_GREY.r, COLOR_GREY.g, COLOR_GREY.b)
+                self.label:SetFontObject("GameFontNormal")
+            end
+        end
+
+        btn:SetScript("OnClick", function() UI:SwitchTab(tabKey) end)
+        navButtons[tabKey] = btn
+    end
+
+    StyleBottomBtn(btnSettings,  "  Settings",  "settings")
+    StyleBottomBtn(btnChangelog, "  Changelog", "changelog")
+
+    -- -- Content panels -------------------------------------------------------
+    local function MakePanel()
+        local p = CreateFrame("Frame", nil, f)
+        p:SetPoint("TOPLEFT",     f, "TOPLEFT",     NAV_W + 10, -32)
+        p:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -6,          6)
+        p:Hide()
+        return p
+    end
+
+    f.panels = {
+        overview  = MakePanel(),
+        targets   = MakePanel(),
+        ledger    = MakePanel(),
+        settings  = MakePanel(),
+        changelog = MakePanel(),
+    }
+
+    BuildOverviewTab(f.panels.overview)
+    BuildTargetsTab(f.panels.targets)
+    BuildLedgerTab(f.panels.ledger)
+    BuildSettingsTab(f.panels.settings)
+    BuildChangelogTab(f.panels.changelog)
+
+    mainFrame = f
+
+    -- Default to overview
+    UI:SwitchTab("overview")
+
+    return f
+end
+
+-- ===============================================================================
+-- MINIMAP TOOLTIP
+-- ===============================================================================
 local function SetupTooltip(tooltip)
     local Data = WarbandAccountant.Data
-    tooltip:AddLine("Warband Accountant", 1, 0.8, 0)
+    tooltip:AddLine("Warband Accountant", 1, 0.82, 0)
     tooltip:AddLine(" ")
-    
-    local currentChar = Data:GetCharacterData()
-    if currentChar then
-        local currentGold = GetMoney()
-        local target = currentChar.targetGold or 0
-        local sessionChange = Data:GetSessionChange()
-        local diff = currentGold - target
-        
-        tooltip:AddLine("Current Character:", 0.8, 0.8, 0.8)
-        tooltip:AddDoubleLine("  " .. currentChar.name, WarbandAccountant.FormatGold(currentGold), 1, 1, 1, 1, 1, 1)
-        
-        if currentChar.paused then
-            tooltip:AddLine("  |cFFFF0000PAUSED|r", 1, 0, 0)
-        end
-        
-        if currentChar.charType then
-            local typeLabel = currentChar.charType == "mainAlt" and "Main Alt" or currentChar.charType:gsub("^%l", string.upper)
-            tooltip:AddLine("  Type: |cFF00FF00" .. typeLabel .. "|r", 0.8, 0.8, 0.8)
-        end
-        
-        if sessionChange ~= 0 then
-            local color = sessionChange > 0 and "|cFF00FF00" or "|cFFFF0000"
-            local sign = sessionChange > 0 and "+" or ""
-            tooltip:AddDoubleLine("  This Session:", color .. sign .. WarbandAccountant.FormatGold(sessionChange) .. "|r", 0.7, 0.7, 0.7, 1, 1, 1)
-        end
-        
-        tooltip:AddDoubleLine("  Target:", WarbandAccountant.FormatGold(target), 0.7, 0.7, 0.7, 0.7, 0.7, 0.7)
-        
-        if diff > 0 then
-            tooltip:AddDoubleLine("  Excess:", WarbandAccountant.FormatGold(diff), 0, 1, 0, 0, 1, 0)
-        elseif diff < 0 then
-            tooltip:AddDoubleLine("  Deficit:", WarbandAccountant.FormatGold(math.abs(diff)), 1, 0, 0, 1, 0, 0)
-        end
-        tooltip:AddLine(" ")
-    end
-    
-    local warbandGold = Core:GetWarbandGold()
+
+    local warbandGold = WarbandAccountant.Core:GetWarbandGold()
     tooltip:AddDoubleLine("Warband Bank:", WarbandAccountant.FormatGold(warbandGold), 0.8, 0.8, 0, 1, 1, 0)
-    
-    -- Total Made and Total Session moved back under Warband Bank
-    local totalDeposited, totalWithdrawn = Data:GetTotalLedgerStats()
-    local totalMade = totalDeposited - totalWithdrawn
-    if totalMade ~= 0 or totalDeposited > 0 or totalWithdrawn > 0 then
-        local madeColor, madePrefix
-        if totalMade > 0 then
-            madeColor = "|cFF00FF00"
-            madePrefix = "+"
-        elseif totalMade < 0 then
-            madeColor = "|cFFFF0000"
-            madePrefix = ""
-        else
-            madeColor = "|cFFFFFFFF"
-            madePrefix = ""
-        end
-        tooltip:AddDoubleLine("Total Made:", madeColor .. madePrefix .. WarbandAccountant.FormatGold(totalMade) .. "|r", 0.8, 0.8, 0.8, 1, 1, 1)
+
+    local totalGold = Data:GetTotalTrackedGold()
+    tooltip:AddDoubleLine("Total Gold:", WarbandAccountant.FormatGold(totalGold), 0.8, 0.8, 0.8, 1, 1, 1)
+
+    local weekly = Data:GetWeeklyIncome()
+    local wc = weekly >= 0
+    tooltip:AddDoubleLine("This Week:",
+        (wc and "|cFF33FF33+" or "|cFFFF4444") .. WarbandAccountant.FormatGold(weekly) .. "|r",
+        0.8, 0.8, 0.8, 1, 1, 1)
+
+    local session = Data:GetTotalSessionChange()
+    if session ~= 0 then
+        local sc2 = session >= 0
+        tooltip:AddDoubleLine("Session:",
+            (sc2 and "|cFF33FF33+" or "|cFFFF4444") .. WarbandAccountant.FormatGold(session) .. "|r",
+            0.8, 0.8, 0.8, 1, 1, 1)
     end
-    
-    local totalSession = Data:GetTotalSessionChange()
-    if totalSession ~= 0 then
-        local color = totalSession > 0 and "|cFF00FF00" or "|cFFFF0000"
-        local sign = totalSession > 0 and "+" or ""
-        tooltip:AddDoubleLine("Total Session:", color .. sign .. WarbandAccountant.FormatGold(totalSession) .. "|r", 0.8, 0.8, 0.8, 1, 1, 1)
-    end
-    
-    local weeklyIncome = Data:GetWeeklyIncome()
-    do
-        local wColor = weeklyIncome > 0 and "|cFF00FF00" or (weeklyIncome < 0 and "|cFFFF0000" or "|cFFFFFFFF")
-        local wSign  = weeklyIncome > 0 and "+" or ""
-        tooltip:AddDoubleLine("This Week:", wColor .. wSign .. WarbandAccountant.FormatGold(weeklyIncome) .. "|r", 0.8, 0.8, 0.8, 1, 1, 1)
-    end
-    
+
     tooltip:AddLine(" ")
-    
-    -- Guild Banks Section (now below Total Made)
-    local db = Data:GetDB()
-    local currentGuild = select(1, GetGuildInfo("player"))
-    local currentRealm = GetRealmName()
-    local guildBanksShown = false
-    
-    if db and db.guildBankData then
-        local guildList = {}
-        
-        for gName, data in pairs(db.guildBankData) do
-            if data and (data.gold or 0) > 0 then
-                table.insert(guildList, {
-                    name = gName,
-                    gold = data.gold,
-                    realm = data.realm,
-                    isCurrent = (gName == currentGuild and data.realm == currentRealm)
-                })
-            end
-        end
-        
-        -- Sort: current guild first, then current realm, then by gold amount descending
-        table.sort(guildList, function(a, b)
-            if a.isCurrent ~= b.isCurrent then
-                return a.isCurrent
-            end
-            if (a.realm == currentRealm) ~= (b.realm == currentRealm) then
-                return a.realm == currentRealm
-            end
-            return a.gold > b.gold
-        end)
-        
-        if #guildList > 0 then
-            tooltip:AddLine("Guild Banks:", 0.8, 0.8, 0.8)
-            
-            for _, guild in ipairs(guildList) do
-                local nameColor = guild.isCurrent and "|cFF00FF00" or "|cFFFFFF00"
-                local indicators = ""
-                
-                -- Mark other realms
-                if guild.realm ~= currentRealm then
-                    indicators = " (*)"
-                end
-                
-                tooltip:AddDoubleLine("  " .. nameColor .. guild.name .. "|r" .. indicators, WarbandAccountant.FormatGold(guild.gold), 1, 0.82, 0, 1, 1, 1)
-            end
-            
-            guildBanksShown = true
-            tooltip:AddLine(" ")
-        end
-    end
-    
-    -- Fallback if no stored data but we're GM of current guild
-    if not guildBanksShown and currentGuild then
-        if Data:IsGuildMaster() then
-            local gold = GetGuildBankMoney() or 0
-            if gold > 0 then
-                tooltip:AddLine("Guild Banks:", 0.8, 0.8, 0.8)
-                tooltip:AddDoubleLine("  |cFF00FF00" .. currentGuild .. "|r", WarbandAccountant.FormatGold(gold), 1, 0.82, 0, 1, 1, 1)
-                tooltip:AddLine(" ")
-            end
-        end
-    end
-    
-    local characters = Data:GetAllCharacters()
-    local totalTracked = 0
-    local charList = {}
-    
-    for id, charData in pairs(characters) do
-        if charData.currentGold then
-            totalTracked = totalTracked + charData.currentGold
-            local session = Data:GetSessionChange(id)
-            table.insert(charList, {
-                name = charData.name, 
-                gold = charData.currentGold, 
-                class = charData.class, 
-                realm = charData.realm, 
-                session = session,
-                paused = charData.paused,
-                charType = charData.charType
-            })
-        end
-    end
-    
-    table.sort(charList, function(a, b) return a.gold > b.gold end)
-    
-    tooltip:AddLine("Warband Characters:", 0.8, 0.8, 0.8)
-    
-    for i, char in ipairs(charList) do
-        if i <= 10 then
-            local color = RAID_CLASS_COLORS[char.class] or {r=1, g=1, b=1}
-            local sessionIndicator = ""
-            if char.session > 0 then sessionIndicator = " |cFF00FF00↑|r" elseif char.session < 0 then sessionIndicator = " |cFFFF0000↓|r" end
-            local pausedIndicator = char.paused and " |cFFFF0000[P]|r" or ""
-            local typeIndicator = char.charType and string.format(" |cFF00FF00[%s]|r", char.charType == "mainAlt" and "MA" or char.charType:sub(1,1):upper()) or ""
-            
-            tooltip:AddDoubleLine("  " .. char.name .. pausedIndicator .. typeIndicator .. sessionIndicator .. (char.realm ~= GetRealmName() and " (*)" or ""), FormatGoldShort(char.gold), color.r, color.g, color.b, 1, 1, 1)
-        end
-    end
-    
-    if #charList > 10 then tooltip:AddLine("  ... and " .. (#charList - 10) .. " more", 0.5, 0.5, 0.5) end
-    
-    tooltip:AddLine(" ")
-    tooltip:AddDoubleLine("Total Tracked:", WarbandAccountant.FormatGold(totalTracked), 0.6, 0.8, 1, 0.6, 0.8, 1)
-    tooltip:AddLine(" ")
-    tooltip:AddLine("Left-Click: Ledger", 0.5, 0.5, 0.5)
-    tooltip:AddLine("Right-Click: Settings", 0.5, 0.5, 0.5)
-    tooltip:AddLine("Type /wba for Targets", 0.5, 0.5, 0.5)
+    tooltip:AddLine("Click: Open Warband Accountant", 0.5, 0.5, 0.5)
 end
 
+-- ===============================================================================
+-- PUBLIC INTERFACE
+-- ===============================================================================
 function UI:Init()
     if not hasLDB or not hasLibDBIcon then
         print("|cFFFF0000Warband Accountant:|r LibDBIcon not found. Minimap button disabled.")
         return
     end
-    
-    local LDB = LibStub("LibDataBroker-1.1")
+
+    local LDB       = LibStub("LibDataBroker-1.1")
     local libDBIcon = LibStub("LibDBIcon-1.0")
-    local Data = WarbandAccountant.Data
-    
+    local Data      = WarbandAccountant.Data
+
     minimapLDB = LDB:NewDataObject("WarbandAccountant", {
         type = "launcher",
         text = "Warband Accountant",
         icon = "Interface\\AddOns\\WarbandAccountant\\Textures\\minimap",
         OnClick = function(self, button)
-            if button == "RightButton" then 
-                WarbandAccountant.Settings:OpenSettings()
-            else
-                UI:ToggleLedgerWindow()
-            end
+            UI:Toggle(button == "RightButton" and "settings" or "overview")
         end,
         OnTooltipShow = function(tooltip) SetupTooltip(tooltip) end,
     })
-    
+
     libDBIcon:Register("WarbandAccountant", minimapLDB, Data:GetSettings())
+end
+
+function UI:Toggle(tabKey)
+    if not mainFrame then CreateMainWindow() end
+    if mainFrame:IsShown() and activeTab == (tabKey or "overview") then
+        mainFrame:Hide()
+    else
+        mainFrame:Show()
+        UI:SwitchTab(tabKey or "overview")
+    end
 end
 
 function UI:ToggleMinimapButton()
     if not hasLibDBIcon then return end
     local libDBIcon = LibStub("LibDBIcon-1.0")
-    local Data = WarbandAccountant.Data
-    local settings = Data:GetSettings()
-    if settings.hide then libDBIcon:Hide("WarbandAccountant") else libDBIcon:Show("WarbandAccountant") end
+    local settings  = WarbandAccountant.Data:GetSettings()
+    if settings.hide then libDBIcon:Hide("WarbandAccountant")
+    else libDBIcon:Show("WarbandAccountant") end
 end
 
 function UI:UpdateTooltip()
@@ -261,1319 +1398,53 @@ function UI:UpdateTooltip()
     end
 end
 
-local function CreateTab(parent, text, id)
-    local tab = CreateFrame("Button", nil, parent)
-    tab:SetSize(130, 36)
-    
-    tab.left = tab:CreateTexture(nil, "BACKGROUND")
-    tab.left:SetTexture("Interface\\PaperDollInfoFrame\\UI-Character-InactiveTab")
-    tab.left:SetSize(20, 36)
-    tab.left:SetPoint("BOTTOMLEFT", 0, -4)
-    tab.left:SetTexCoord(0, 0.15625, 0, 1.0)
-    
-    tab.right = tab:CreateTexture(nil, "BACKGROUND")
-    tab.right:SetTexture("Interface\\PaperDollInfoFrame\\UI-Character-InactiveTab")
-    tab.right:SetSize(20, 36)
-    tab.right:SetPoint("BOTTOMRIGHT", 0, -4)
-    tab.right:SetTexCoord(0.84375, 1.0, 0, 1.0)
-    
-    tab.middle = tab:CreateTexture(nil, "BACKGROUND")
-    tab.middle:SetTexture("Interface\\PaperDollInfoFrame\\UI-Character-InactiveTab")
-    tab.middle:SetPoint("BOTTOMLEFT", tab.left, "BOTTOMRIGHT", 0, 0)
-    tab.middle:SetPoint("TOPRIGHT", tab.right, "TOPLEFT", 0, 0)
-    tab.middle:SetTexCoord(0.15625, 0.84375, 0, 1.0)
-    
-    tab.highlight = tab:CreateTexture(nil, "HIGHLIGHT")
-    tab.highlight:SetTexture("Interface\\PaperDollInfoFrame\\UI-Character-Tab-Highlight")
-    tab.highlight:SetPoint("TOPLEFT", 8, -8)
-    tab.highlight:SetPoint("BOTTOMRIGHT", -8, 8)
-    tab.highlight:SetBlendMode("ADD")
-    
-    tab.text = tab:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    tab.text:SetPoint("CENTER", 0, -6)
-    tab.text:SetText(text)
-    
-    function tab:SetActive(isActive)
-        if isActive then
-            tab.left:SetVertexColor(1.0, 0.9, 0.6)
-            tab.middle:SetVertexColor(1.0, 0.9, 0.6)
-            tab.right:SetVertexColor(1.0, 0.9, 0.6)
-            
-            tab.text:SetFontObject("GameFontHighlight")
-            tab.text:SetTextColor(1, 0.82, 0)
-            tab.text:SetAlpha(1)
-            
-            tab:EnableMouse(false)
-        else
-            tab.left:SetVertexColor(0.7, 0.7, 0.7)
-            tab.middle:SetVertexColor(0.7, 0.7, 0.7)
-            tab.right:SetVertexColor(0.7, 0.7, 0.7)
-            
-            tab.text:SetFontObject("GameFontNormal")
-            tab.text:SetTextColor(0.6, 0.6, 0.6)
-            tab.text:SetAlpha(0.8)
-            
-            tab:EnableMouse(true)
-        end
-    end
-    
-    return tab
-end
-
-local function CreateLedgerWindow()
-    local f = CreateFrame("Frame", "WarbandAccountantLedgerFrame", UIParent, "BasicFrameTemplateWithInset")
-    f:SetSize(1020, 610)
-    
-    local Data = WarbandAccountant.Data
-    local db = Data:GetDB()
-    db.framePositions = db.framePositions or {}
-    
-    if db.framePositions.ledger and db.framePositions.ledger.point then
-        f:SetPoint(db.framePositions.ledger.point, db.framePositions.ledger.x, db.framePositions.ledger.y)
-    else
-        f:SetPoint("CENTER", 0, 0)
-    end
-    
-    f:SetMovable(true)
-    f:EnableMouse(true)
-    f:RegisterForDrag("LeftButton")
-    f:SetScript("OnDragStart", f.StartMoving)
-    f:SetScript("OnDragStop", function(self)
-        self:StopMovingOrSizing()
-        local point, _, _, x, y = self:GetPoint(1)
-        db.framePositions.ledger = {point = point, x = x, y = y}
-    end)
-    
-    f:SetFrameStrata("HIGH")
-    f:EnableKeyboard(true)
-    f:SetScript("OnKeyDown", function(self, key)
-        if key == "ESCAPE" then 
-            self:Hide()
-            self:SetPropagateKeyboardInput(false)
-        else
-            self:SetPropagateKeyboardInput(true)
-        end
-    end)
-    tinsert(UISpecialFrames, f:GetName())
-    
-    f.TitleBg:SetHeight(25)
-    f.title = f:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-    f.title:SetPoint("TOP", f.TitleBg, "TOP", 0, -6)
-    f.title:SetText("Warband Accountant - Ledger")
-    
-    local warbandContent = CreateFrame("Frame", nil, f)
-    warbandContent:SetPoint("TOPLEFT", f, "TOPLEFT", 15, -35)
-    warbandContent:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -15, 15)
-    f.warbandContent = warbandContent
-    
-    SetupWarbandLedgerContent(warbandContent, f)
-    
-    ledgerFrame = f
-    return f
-end
-
-function SetupWarbandLedgerContent(content, parent)
-    local Data = WarbandAccountant.Data
-    
-    local summaryText = content:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-    summaryText:SetPoint("TOPLEFT", 10, -10)
-    summaryText:SetText("Warband Bank Transaction History")
-    summaryText:SetTextColor(1, 0.82, 0)
-    
-    -- Filter dropdown — top right corner
-    local filterDropdown = CreateFrame("Frame", "WarbandAccountantLedgerFilterDropdown", content, "UIDropDownMenuTemplate")
-    filterDropdown:SetPoint("TOPRIGHT", content, "TOPRIGHT", 16, -2)
-    UIDropDownMenu_SetWidth(filterDropdown, 160)
-    UIDropDownMenu_SetText(filterDropdown, "All Characters")
-    
-    local filterLabel = content:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    filterLabel:SetPoint("RIGHT", filterDropdown, "LEFT", 16, 1)
-    filterLabel:SetText("Filter:")
-    filterLabel:SetTextColor(0.7, 0.7, 0.7)
-    
-    -- Clear History — below the dropdown
-    local clearBtn = CreateFrame("Button", nil, content, "UIPanelButtonTemplate")
-    clearBtn:SetSize(100, 22)
-    clearBtn:SetPoint("TOPRIGHT", filterDropdown, "BOTTOMRIGHT", -18, 2)
-    clearBtn:SetText("Clear History")
-    clearBtn:SetScript("OnClick", function() StaticPopup_Show("WARBANDACCOUNTANT_CLEAR_LEDGER") end)
-    
-    StaticPopupDialogs["WARBANDACCOUNTANT_CLEAR_LEDGER"] = {
-        text = "Clear all Warband ledger history?",
-        button1 = "Yes",
-        button2 = "No",
-        OnAccept = function() Data:ClearLedger(); UI:UpdateWarbandLedger() end,
-        timeout = 0,
-        whileDead = true,
-        hideOnEscape = true,
-    }
-    
-    local function RefreshFilterDropdown()
-        UIDropDownMenu_Initialize(filterDropdown, function(self, level)
-            local info = UIDropDownMenu_CreateInfo()
-            
-            info.text    = "All Characters"
-            info.arg1    = nil
-            info.checked = (ledgerCharFilter == nil)
-            info.func    = function(btn, arg1)
-                ledgerCharFilter = nil
-                UIDropDownMenu_SetText(filterDropdown, "All Characters")
-                UI:UpdateWarbandLedger()
-            end
-            UIDropDownMenu_AddButton(info)
-            
-            local characters = Data:GetAllCharacters()
-            local charList = {}
-            for id, charData in pairs(characters) do
-                table.insert(charList, { id = id, name = charData.name, realm = charData.realm })
-            end
-            table.sort(charList, function(a, b) return a.name < b.name end)
-            
-            for _, char in ipairs(charList) do
-                local displayName = char.name .. (char.realm ~= GetRealmName() and " (*)" or "")
-                info = UIDropDownMenu_CreateInfo()
-                info.text    = displayName
-                info.arg1    = char.id
-                info.checked = (ledgerCharFilter == char.id)
-                info.func    = function(btn, arg1)
-                    ledgerCharFilter = arg1
-                    UIDropDownMenu_SetText(filterDropdown, btn:GetText())
-                    UI:UpdateWarbandLedger()
-                end
-                UIDropDownMenu_AddButton(info)
-            end
-        end)
-    end
-    
-    filterDropdown:SetScript("OnShow", RefreshFilterDropdown)
-    RefreshFilterDropdown()
-    parent.ledgerFilterDropdown = filterDropdown
-    
-    -- Stats line — anchored directly below the title, nothing else in the way
-    local statsText = content:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    statsText:SetPoint("TOPLEFT", summaryText, "BOTTOMLEFT", 0, -18)
-    parent.warbandStatsText = statsText
-    
-    local separator = content:CreateTexture(nil, "ARTWORK")
-    separator:SetColorTexture(0.25, 0.25, 0.25, 0.8)
-    separator:SetHeight(1)
-    separator:SetPoint("TOPLEFT",  content, "TOPLEFT",  0, -88)
-    separator:SetPoint("TOPRIGHT", content, "TOPRIGHT", 0, -88)
-    
-    local colTime    = 15
-    local colChar    = 130
-    local colType    = 290
-    local colAmount  = 430
-    local colBalance = 610
-    local colNote    = 790
-    
-    local hTime = content:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    hTime:SetPoint("TOPLEFT", colTime, -98)
-    hTime:SetText("Time")
-    hTime:SetTextColor(0.8, 0.8, 0.8)
-    
-    local hChar = content:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    hChar:SetPoint("TOPLEFT", colChar, -98)
-    hChar:SetText("Character")
-    hChar:SetTextColor(0.8, 0.8, 0.8)
-    
-    local hType = content:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    hType:SetPoint("TOPLEFT", colType, -98)
-    hType:SetText("Type")
-    hType:SetTextColor(0.8, 0.8, 0.8)
-    
-    local hAmount = content:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    hAmount:SetPoint("TOPLEFT", colAmount, -98)
-    hAmount:SetText("Amount")
-    hAmount:SetTextColor(0.8, 0.8, 0.8)
-    
-    local hBalance = content:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    hBalance:SetPoint("TOPLEFT", colBalance, -98)
-    hBalance:SetText("Warband Bank")
-    hBalance:SetTextColor(0.8, 0.8, 0.8)
-    
-    local hNote = content:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    hNote:SetPoint("TOPLEFT", colNote, -98)
-    hNote:SetText("Note")
-    hNote:SetTextColor(0.8, 0.8, 0.8)
-    
-    local scrollFrame = CreateFrame("ScrollFrame", nil, content, "UIPanelScrollFrameTemplate")
-    scrollFrame:SetPoint("TOPLEFT",     content, "TOPLEFT",  0,   -116)
-    scrollFrame:SetPoint("BOTTOMRIGHT", content, "BOTTOMRIGHT", -26, 0)
-    
-    local scrollContent = CreateFrame("Frame")
-    scrollContent:SetWidth(980)
-    scrollFrame:SetScrollChild(scrollContent)
-    
-    parent.warbandScrollContent = scrollContent
-    parent.warbandScrollFrame = scrollFrame
-    parent.warbandRows = {}
-    
-    parent.ledgerColPos = {
-        time = colTime,
-        char = colChar,
-        type = colType,
-        amount = colAmount,
-        balance = colBalance,
-        note = colNote
-    }
-end
-
-local function CreateMainWindow()
-    local f = CreateFrame("Frame", "WarbandAccountantMainFrame", UIParent, "BasicFrameTemplateWithInset")
-    f:SetSize(950, 480)
-    
-    local Data = WarbandAccountant.Data
-    local db = Data:GetDB()
-    db.framePositions = db.framePositions or {}
-    
-    if db.framePositions.main and db.framePositions.main.point then
-        f:SetPoint(db.framePositions.main.point, db.framePositions.main.x, db.framePositions.main.y)
-    else
-        f:SetPoint("CENTER", 0, 0)
-    end
-    
-    f:SetMovable(true)
-    f:EnableMouse(true)
-    f:RegisterForDrag("LeftButton")
-    f:SetScript("OnDragStart", f.StartMoving)
-    f:SetScript("OnDragStop", function(self)
-        self:StopMovingOrSizing()
-        local point, _, _, x, y = self:GetPoint(1)
-        db.framePositions.main = {point = point, x = x, y = y}
-    end)
-    
-    f:SetFrameStrata("HIGH")
-    f:EnableKeyboard(true)
-    f:SetScript("OnKeyDown", function(self, key)
-        if key == "ESCAPE" then 
-            self:Hide()
-            self:SetPropagateKeyboardInput(false)
-        else
-            self:SetPropagateKeyboardInput(true)
-        end
-    end)
-    tinsert(UISpecialFrames, f:GetName())
-    
-    f.TitleBg:SetHeight(25)
-    f.title = f:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-    f.title:SetPoint("TOP", f.TitleBg, "TOP", 0, -6)
-    f.title:SetText("Warband Accountant")
-    
-    local targetsContent = CreateFrame("Frame", nil, f)
-    targetsContent:SetPoint("TOPLEFT", f, "TOPLEFT", 15, -35)
-    targetsContent:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -15, 15)
-    f.targetsContent = targetsContent
-    
-    local settingsContent = CreateFrame("Frame", nil, f)
-    settingsContent:SetPoint("TOPLEFT", f, "TOPLEFT", 15, -35)
-    settingsContent:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -15, 15)
-    settingsContent:Hide()
-    f.settingsContent = settingsContent
-    
-    SetupTargetsContent(targetsContent, f)
-    SetupSettingsContent(settingsContent, f)
-    
-    f.targetsTab = CreateTab(f, "Targets", 1)
-    f.settingsTab = CreateTab(f, "Settings", 2)
-    
-    f.tabs = {f.targetsTab, f.settingsTab}
-    
-    f.targetsTab:SetPoint("TOPLEFT", f, "BOTTOMLEFT", 11, 4)
-    f.settingsTab:SetPoint("LEFT", f.targetsTab, "RIGHT", -8, 0)
-    
-    f.targetsTab:SetActive(true)
-    f.settingsTab:SetActive(false)
-    
-    f.targetsTab:SetScript("OnClick", function(self)
-        for _, t in ipairs(f.tabs or {}) do
-            t:SetActive(false)
-        end
-        self:SetActive(true)
-        f.selectedTab = 1
-        
-        f.targetsContent:Show()
-        f.settingsContent:Hide()
-        
-        UI:UpdateTargets()
-    end)
-    
-    f.settingsTab:SetScript("OnClick", function(self)
-        for _, t in ipairs(f.tabs or {}) do
-            t:SetActive(false)
-        end
-        self:SetActive(true)
-        f.selectedTab = 2
-        
-        f.targetsContent:Hide()
-        f.settingsContent:Show()
-    end)
-    
-    mainFrame = f
-    return f
-end
-
-function SetupSettingsContent(content, parent)
-    local Data = WarbandAccountant.Data
-    
-    local title = content:CreateFontString(nil, "OVERLAY", "GameFontNormalHuge")
-    title:SetPoint("TOP", 0, -15)
-    title:SetText("Settings")
-    title:SetTextColor(1, 0.82, 0)
-    
-    local subtitle = content:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-    subtitle:SetPoint("TOP", title, "BOTTOM", 0, -5)
-    subtitle:SetText("Configure default values and display preferences")
-    subtitle:SetTextColor(0.7, 0.7, 0.7)
-    
-    local targetSection = CreateFrame("Frame", nil, content, "BackdropTemplate")
-    targetSection:SetSize(420, 160)
-    targetSection:SetPoint("TOP", subtitle, "BOTTOM", 0, -20)
-    targetSection:SetBackdrop({
-        bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background-Dark",
-        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
-        tile = true,
-        tileSize = 16,
-        edgeSize = 16,
-        insets = { left = 4, right = 4, top = 4, bottom = 4 }
-    })
-    targetSection:SetBackdropColor(0, 0, 0, 0.6)
-    targetSection:SetBackdropBorderColor(0.6, 0.6, 0.6, 0.8)
-    
-    local targetHeader = targetSection:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
-    targetHeader:SetPoint("TOPLEFT", 15, -12)
-    targetHeader:SetText("Default Target Amounts")
-    targetHeader:SetTextColor(1, 0.82, 0)
-    
-    local targetDesc = targetSection:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    targetDesc:SetPoint("TOPLEFT", targetHeader, "BOTTOMLEFT", 0, -3)
-    targetDesc:SetText("Gold to maintain on characters based on classification")
-    targetDesc:SetTextColor(0.6, 0.6, 0.6)
-    
-    local function CreateTargetInput(parent, labelText, charType, yOffset)
-        local label = parent:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-        label:SetPoint("TOPLEFT", 20, yOffset)
-        label:SetText(labelText)
-        label:SetTextColor(0.9, 0.9, 0.9)
-        
-        local editBox = CreateFrame("EditBox", nil, parent, "InputBoxTemplate")
-        editBox:SetSize(90, 22)
-        editBox:SetPoint("LEFT", label, "RIGHT", 15, 0)
-        editBox:SetAutoFocus(false)
-        editBox:SetNumeric(true)
-        editBox:SetMaxLetters(6)
-        editBox:SetJustifyH("CENTER")
-        editBox:SetTextInsets(0, 0, 0, 0)
-        
-        local currentGold = math.floor((Data:GetDefaultTarget(charType) or 0) / 10000)
-        editBox:SetText(tostring(currentGold))
-        
-        local goldLabel = parent:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-        goldLabel:SetPoint("LEFT", editBox, "RIGHT", 8, 0)
-        goldLabel:SetText("gold")
-        goldLabel:SetTextColor(1, 0.82, 0)
-        
-        editBox:SetScript("OnEnterPressed", function(self)
-            local goldValue = tonumber(self:GetText()) or 0
-            Data:SetDefaultTarget(charType, goldValue * 10000)
-            self:ClearFocus()
-        end)
-        
-        editBox:SetScript("OnEditFocusLost", function(self)
-            local goldValue = tonumber(self:GetText()) or 0
-            Data:SetDefaultTarget(charType, goldValue * 10000)
-        end)
-        
-        editBox:SetScript("OnEnter", function(self)
-            GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-            GameTooltip:SetText("Default: " .. (currentGold > 0 and currentGold or 0) .. " gold")
-            GameTooltip:Show()
-        end)
-        editBox:SetScript("OnLeave", function() GameTooltip:Hide() end)
-    end
-    
-    CreateTargetInput(targetSection, "Main Character:", "main", -45)
-    CreateTargetInput(targetSection, "Main Alt:", "mainAlt", -75)
-    CreateTargetInput(targetSection, "Alt:", "alt", -105)
-    
-    local displaySection = CreateFrame("Frame", nil, content, "BackdropTemplate")
-    displaySection:SetSize(420, 120)
-    displaySection:SetPoint("TOP", targetSection, "BOTTOM", 0, -15)
-    displaySection:SetBackdrop({
-        bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background-Dark",
-        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
-        tile = true,
-        tileSize = 16,
-        edgeSize = 16,
-        insets = { left = 4, right = 4, top = 4, bottom = 4 }
-    })
-    displaySection:SetBackdropColor(0, 0, 0, 0.6)
-    displaySection:SetBackdropBorderColor(0.6, 0.6, 0.6, 0.8)
-    
-    local displayHeader = displaySection:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
-    displayHeader:SetPoint("TOPLEFT", 15, -12)
-    displayHeader:SetText("Display Options")
-    displayHeader:SetTextColor(1, 0.82, 0)
-    
-    local displayDesc = displaySection:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    displayDesc:SetPoint("TOPLEFT", displayHeader, "BOTTOMLEFT", 0, -3)
-    displayDesc:SetText("Customize how characters are organized in the Targets tab")
-    displayDesc:SetTextColor(0.6, 0.6, 0.6)
-    
-    local sortLabel = displaySection:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    sortLabel:SetPoint("TOPLEFT", 20, -55)
-    sortLabel:SetText("Sort Mode:")
-    sortLabel:SetTextColor(0.9, 0.9, 0.9)
-    
-    local sortDropdown = CreateFrame("Frame", "WarbandAccountantSortDropdown", displaySection, "UIDropDownMenuTemplate")
-    sortDropdown:SetPoint("LEFT", sortLabel, "RIGHT", 10, 0)
-    UIDropDownMenu_SetWidth(sortDropdown, 150)
-    
-    local currentSortMode = Data:GetSortMode()
-    UIDropDownMenu_SetText(sortDropdown, currentSortMode == "arrow" and "Arrow Buttons" or "Number Input")
-    
-    local function SortDropdown_OnClick(self, arg1)
-        UIDropDownMenu_SetText(sortDropdown, arg1 == "arrow" and "Arrow Buttons" or "Number Input")
-        Data:SetSortMode(arg1)
-        if mainFrame and mainFrame:IsShown() and mainFrame.selectedTab == 1 then
-            UI:UpdateTargets()
-        end
-    end
-    
-    UIDropDownMenu_Initialize(sortDropdown, function(self, level)
-        local info = UIDropDownMenu_CreateInfo()
-        info.func = SortDropdown_OnClick
-        info.arg1 = "arrow"
-        info.text = "Arrow Buttons"
-        info.checked = Data:GetSortMode() == "arrow"
-        info.tooltipTitle = "Arrow Buttons"
-        info.tooltipText = "Use up/down arrows to move characters in the list"
-        UIDropDownMenu_AddButton(info)
-        
-        info = UIDropDownMenu_CreateInfo()
-        info.func = SortDropdown_OnClick
-        info.arg1 = "number"
-        info.text = "Number Input"
-        info.checked = Data:GetSortMode() == "number"
-        info.tooltipTitle = "Number Input"
-        info.tooltipText = "Type numbers to set exact sort order (1, 2, 3...)"
-        UIDropDownMenu_AddButton(info)
-    end)
-    
-    local infoText = content:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    infoText:SetPoint("TOP", displaySection, "BOTTOM", 0, -15)
-    infoText:SetText("Note: Default targets apply to new character classifications only.\nUse the Targets tab to assign types to individual characters.")
-    infoText:SetTextColor(0.5, 0.5, 0.5, 0.8)
-    infoText:SetJustifyH("CENTER")
-end
-
-function SetupTargetsContent(content, parent)
-    local colReorder = 15
-    local colCharacter = 58
-    local colRealm = 190
-    local colMain = 295
-    local colMainAlt = 340
-    local colAlt = 385
-    local colTarget = 480
-    local colCurrent = 610
-    local colPaused = 745
-    local colDelete = 820
-    
-    local headerY = -10
-    
-    local headerCharacter = content:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    headerCharacter:SetPoint("TOPLEFT", colCharacter, headerY)
-    headerCharacter:SetText("Character")
-    headerCharacter:SetTextColor(1, 0.82, 0)
-    
-    local headerRealm = content:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    headerRealm:SetPoint("TOPLEFT", colRealm, headerY)
-    headerRealm:SetText("Realm")
-    headerRealm:SetTextColor(1, 0.82, 0)
-    
-    local headerMain = content:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    headerMain:SetPoint("TOPLEFT", colMain, headerY)
-    headerMain:SetText("Main")
-    headerMain:SetTextColor(1, 0.82, 0)
-    
-    local headerMainAlt = content:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    headerMainAlt:SetPoint("TOPLEFT", colMainAlt, headerY)
-    headerMainAlt:SetText("M.Alt")
-    headerMainAlt:SetTextColor(1, 0.82, 0)
-    
-    local headerAlt = content:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    headerAlt:SetPoint("TOPLEFT", colAlt, headerY)
-    headerAlt:SetText("Alt")
-    headerAlt:SetTextColor(1, 0.82, 0)
-    
-    local headerTarget = content:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    headerTarget:SetPoint("TOPLEFT", colTarget, headerY)
-    headerTarget:SetText("Target")
-    headerTarget:SetTextColor(1, 0.82, 0)
-    
-    local headerCurrent = content:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    headerCurrent:SetPoint("TOPLEFT", colCurrent, headerY)
-    headerCurrent:SetText("Current")
-    headerCurrent:SetTextColor(1, 0.82, 0)
-    
-    local headerPaused = content:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    headerPaused:SetPoint("TOPLEFT", colPaused, headerY)
-    headerPaused:SetText("Pause")
-    headerPaused:SetTextColor(1, 0.82, 0)
-    
-    local headerDelete = content:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    headerDelete:SetPoint("TOPLEFT", colDelete, headerY)
-    headerDelete:SetText("Delete")
-    headerDelete:SetTextColor(1, 0.82, 0)
-    
-    local separator = content:CreateTexture(nil, "ARTWORK")
-    separator:SetColorTexture(0.25, 0.25, 0.25, 0.8)
-    separator:SetHeight(1)
-    separator:SetPoint("TOPLEFT", content, "TOPLEFT", 0, -32)
-    separator:SetPoint("TOPRIGHT", content, "TOPRIGHT", 0, -32)
-    
-    local scrollFrame = CreateFrame("ScrollFrame", nil, content, "UIPanelScrollFrameTemplate")
-    scrollFrame:SetPoint("TOPLEFT", content, "TOPLEFT", 0, -40)
-    scrollFrame:SetPoint("BOTTOMRIGHT", content, "BOTTOMRIGHT", -26, 0)
-    
-    local scrollContent = CreateFrame("Frame")
-    scrollContent:SetWidth(920)
-    scrollFrame:SetScrollChild(scrollContent)
-    
-    parent.targetsScrollContent = scrollContent
-    parent.targetsScrollFrame = scrollFrame
-    parent.targetRows = {}
-    
-    parent.targetsColPos = {
-        reorder = colReorder,
-        character = colCharacter,
-        realm = colRealm,
-        main = colMain,
-        mainAlt = colMainAlt,
-        alt = colAlt,
-        target = colTarget,
-        current = colCurrent,
-        paused = colPaused,
-        delete = colDelete
-    }
-end
-
-function UI:UpdateTargets()
-    if not mainFrame then return end
-    local Data = WarbandAccountant.Data
-    local content = mainFrame.targetsScrollContent
-    local colPos = mainFrame.targetsColPos
-    local characters = Data:GetAllCharacters()
-    local charList = {}
-    local sortMode = Data:GetSortMode()
-    
-    for _, row in ipairs(mainFrame.targetRows or {}) do if row then row:Hide() end end
-    wipe(mainFrame.targetRows or {})
-    mainFrame.targetRows = mainFrame.targetRows or {}
-    
-    for id, data in pairs(characters) do
-        table.insert(charList, {
-            id = id, name = data.name, realm = data.realm, class = data.class,
-            currentGold = data.currentGold or 0, targetGold = data.targetGold or 0,
-            paused = data.paused, charType = data.charType, 
-            sortOrder = data.sortOrder or 0, added = data.added or 0
-        })
-    end
-    
-    table.sort(charList, function(a, b) return (a.sortOrder or 0) < (b.sortOrder or 0) end)
-    
-    local rowHeight = 44
-    local yOffset = -8
-    
-    for i, char in ipairs(charList) do
-        local row = CreateFrame("Frame", nil, content)
-        row:SetSize(900, rowHeight)
-        row:SetPoint("TOPLEFT", 0, yOffset)
-        
-        if i % 2 == 0 then
-            row.bg = row:CreateTexture(nil, "BACKGROUND")
-            row.bg:SetAllPoints()
-            row.bg:SetColorTexture(0.2, 0.2, 0.2, 0.3)
-        end
-        
-        row.highlight = row:CreateTexture(nil, "HIGHLIGHT")
-        row.highlight:SetAllPoints()
-        row.highlight:SetColorTexture(1, 1, 1, 0.05)
-        row.highlight:Hide()
-        row:SetScript("OnEnter", function(self) self.highlight:Show() end)
-        row:SetScript("OnLeave", function(self) self.highlight:Hide() end)
-        
-        if sortMode == "arrow" then
-            local upBtn = CreateFrame("Button", nil, row)
-            upBtn:SetSize(16, 16)
-            upBtn:SetPoint("LEFT", colPos.reorder, 8)
-            
-            local upTex = upBtn:CreateTexture(nil, "ARTWORK")
-            upTex:SetAllPoints()
-            upTex:SetTexture("Interface\\Buttons\\UI-ScrollBar-ScrollUpButton-Up")
-            upTex:SetTexCoord(0.25, 0.75, 0.25, 0.75)
-            upBtn:SetNormalTexture(upTex)
-            
-            local upTexPushed = upBtn:CreateTexture(nil, "ARTWORK")
-            upTexPushed:SetAllPoints()
-            upTexPushed:SetTexture("Interface\\Buttons\\UI-ScrollBar-ScrollUpButton-Down")
-            upTexPushed:SetTexCoord(0.25, 0.75, 0.25, 0.75)
-            upBtn:SetPushedTexture(upTexPushed)
-            
-            local upTexDisabled = upBtn:CreateTexture(nil, "ARTWORK")
-            upTexDisabled:SetAllPoints()
-            upTexDisabled:SetTexture("Interface\\Buttons\\UI-ScrollBar-ScrollUpButton-Disabled")
-            upTexDisabled:SetTexCoord(0.25, 0.75, 0.25, 0.75)
-            upBtn:SetDisabledTexture(upTexDisabled)
-            
-            upBtn:SetHighlightTexture("Interface\\Buttons\\UI-Common-MouseHilight", "ADD")
-            
-            if i > 1 then
-                upBtn:SetScript("OnClick", function()
-                    local prevChar = charList[i - 1]
-                    if prevChar then
-                        Data:SwapCharacterOrder(char.id, prevChar.id)
-                        UI:UpdateTargets()
-                    end
-                end)
-                upBtn:SetScript("OnEnter", function(self)
-                    GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-                    GameTooltip:SetText("Move Up")
-                    GameTooltip:Show()
-                end)
-                upBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
-            else
-                upBtn:Disable()
-            end
-            
-            local downBtn = CreateFrame("Button", nil, row)
-            downBtn:SetSize(16, 16)
-            downBtn:SetPoint("TOP", upBtn, "BOTTOM", 0, 2)
-            
-            local downTex = downBtn:CreateTexture(nil, "ARTWORK")
-            downTex:SetAllPoints()
-            downTex:SetTexture("Interface\\Buttons\\UI-ScrollBar-ScrollDownButton-Up")
-            downTex:SetTexCoord(0.25, 0.75, 0.25, 0.75)
-            downBtn:SetNormalTexture(downTex)
-            
-            local downTexPushed = downBtn:CreateTexture(nil, "ARTWORK")
-            downTexPushed:SetAllPoints()
-            downTexPushed:SetTexture("Interface\\Buttons\\UI-ScrollBar-ScrollDownButton-Down")
-            downTexPushed:SetTexCoord(0.25, 0.75, 0.25, 0.75)
-            downBtn:SetPushedTexture(downTexPushed)
-            
-            local downTexDisabled = downBtn:CreateTexture(nil, "ARTWORK")
-            downTexDisabled:SetAllPoints()
-            downTexDisabled:SetTexture("Interface\\Buttons\\UI-ScrollBar-ScrollDownButton-Disabled")
-            downTexDisabled:SetTexCoord(0.25, 0.75, 0.25, 0.75)
-            downBtn:SetDisabledTexture(downTexDisabled)
-            
-            downBtn:SetHighlightTexture("Interface\\Buttons\\UI-Common-MouseHilight", "ADD")
-            
-            if i < #charList then
-                downBtn:SetScript("OnClick", function()
-                    local nextChar = charList[i + 1]
-                    if nextChar then
-                        Data:SwapCharacterOrder(char.id, nextChar.id)
-                        UI:UpdateTargets()
-                    end
-                end)
-                downBtn:SetScript("OnEnter", function(self)
-                    GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-                    GameTooltip:SetText("Move Down")
-                    GameTooltip:Show()
-                end)
-                downBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
-            else
-                downBtn:Disable()
-            end
-        else
-            local orderEdit = CreateFrame("EditBox", nil, row, "InputBoxTemplate")
-            orderEdit:SetSize(36, 22)
-            orderEdit:SetPoint("LEFT", colPos.reorder, 0)
-            orderEdit:SetAutoFocus(false)
-            orderEdit:SetNumeric(true)
-            orderEdit:SetMaxLetters(3)
-            orderEdit:SetJustifyH("CENTER")
-            orderEdit:SetText(tostring(i))
-            
-            orderEdit:SetScript("OnEnterPressed", function(self)
-                local newPos = tonumber(self:GetText())
-                if newPos and newPos >= 1 and newPos <= #charList and newPos ~= i then
-                    local movedChar = table.remove(charList, i)
-                    table.insert(charList, newPos, movedChar)
-                    
-                    for idx, ch in ipairs(charList) do
-                        Data:SetCharacterSortOrder(ch.id, idx)
-                    end
-                    
-                    UI:UpdateTargets()
-                else
-                    self:SetText(tostring(i))
-                    self:ClearFocus()
-                end
-            end)
-            
-            orderEdit:SetScript("OnEditFocusLost", function(self)
-                self:SetText(tostring(i))
-            end)
-        end
-        
-        local color = RAID_CLASS_COLORS[char.class] or {r=1, g=1, b=1}
-        local nameText = row:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-        nameText:SetPoint("LEFT", colPos.character, 0)
-        nameText:SetText(char.name)
-        nameText:SetTextColor(color.r, color.g, color.b)
-        
-        local realmText = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-        realmText:SetPoint("LEFT", colPos.realm, 0)
-        realmText:SetWidth(130)
-        realmText:SetJustifyH("LEFT")
-        realmText:SetText(char.realm)
-        realmText:SetTextColor(0.6, 0.6, 0.6)
-        
-        local function CreateTypeCheckbox(col, typeName, isChecked)
-            local check = CreateFrame("CheckButton", nil, row, "UICheckButtonTemplate")
-            check:SetSize(24, 24)
-            check:SetPoint("LEFT", col, 0)
-            check:SetChecked(isChecked)
-            
-            check:SetScript("OnClick", function(self)
-                local isNowChecked = self:GetChecked()
-                
-                if isNowChecked then
-                    if row.checkMain and row.checkMain ~= self then row.checkMain:SetChecked(false) end
-                    if row.checkMainAlt and row.checkMainAlt ~= self then row.checkMainAlt:SetChecked(false) end
-                    if row.checkAlt and row.checkAlt ~= self then row.checkAlt:SetChecked(false) end
-                    
-                    Data:SetCharacterType(char.id, typeName)
-                    UI:UpdateTargets()
-                else
-                    Data:SetCharacterType(char.id, nil)
-                end
-                
-                UI:UpdateTooltip()
-            end)
-            
-            check:SetScript("OnEnter", function(self)
-                GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-                local displayName = typeName == "mainAlt" and "Main Alt" or typeName:gsub("^%l", string.upper)
-                GameTooltip:SetText(string.format("Set as %s", displayName))
-                GameTooltip:AddLine(string.format("Sets target to %s default", displayName), 1, 1, 1, true)
-                GameTooltip:Show()
-            end)
-            
-            check:SetScript("OnLeave", function() GameTooltip:Hide() end)
-            
-            return check
-        end
-        
-        local currentType = Data:GetCharacterType(char.id)
-        
-        row.checkMain = CreateTypeCheckbox(colPos.main, "main", currentType == "main")
-        row.checkMainAlt = CreateTypeCheckbox(colPos.mainAlt, "mainAlt", currentType == "mainAlt")
-        row.checkAlt = CreateTypeCheckbox(colPos.alt, "alt", currentType == "alt")
-        
-        local editBox = CreateFrame("EditBox", nil, row, "InputBoxTemplate")
-        editBox:SetSize(80, 22)
-        editBox:SetPoint("LEFT", colPos.target, 0)
-        editBox:SetAutoFocus(false)
-        editBox:SetNumeric(true)
-        editBox:SetMaxLetters(7)
-        editBox:SetText(tostring(math.floor(char.targetGold / 10000)))
-        editBox:SetJustifyH("RIGHT")
-        editBox:SetTextInsets(0, 8, 0, 0)
-        
-        local goldLabel = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-        goldLabel:SetPoint("LEFT", editBox, "RIGHT", 4, 0)
-        goldLabel:SetText("g")
-        goldLabel:SetTextColor(1, 0.82, 0)
-        
-        editBox:SetScript("OnEnterPressed", function(self)
-            local goldValue = tonumber(self:GetText()) or 0
-            Data:SetCharacterTarget(char.id, goldValue * 10000)
-            self:ClearFocus()
-            UI:UpdateTargets()
-        end)
-        editBox:SetScript("OnEditFocusLost", function(self)
-            local goldValue = tonumber(self:GetText()) or 0
-            Data:SetCharacterTarget(char.id, goldValue * 10000)
-            UI:UpdateTargets()
-        end)
-        
-        local currentText = row:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-        currentText:SetPoint("LEFT", colPos.current, 0)
-        currentText:SetJustifyH("LEFT")
-        currentText:SetWidth(140)
-        
-        local gold = math.floor(char.currentGold / 10000)
-        local silver = math.floor((char.currentGold % 10000) / 100)
-        local copper = char.currentGold % 100
-        
-        if gold > 0 then currentText:SetText(string.format("%d|cFF00FF00g|r %d|cFFCCCCCCs|r %d|cFFB87333c|r", gold, silver, copper))
-        elseif silver > 0 then currentText:SetText(string.format("%d|cFFCCCCCCs|r %d|cFFB87333c|r", silver, copper))
-        else currentText:SetText(string.format("%d|cFFB87333c|r", copper)) end
-        
-        if char.currentGold < char.targetGold then currentText:SetTextColor(1, 0.4, 0.4)
-        elseif char.currentGold > char.targetGold then currentText:SetTextColor(0.4, 1, 0.4)
-        else currentText:SetTextColor(1, 1, 1) end
-        
-        local pauseCheck = CreateFrame("CheckButton", nil, row, "UICheckButtonTemplate")
-        pauseCheck:SetSize(24, 24)
-        pauseCheck:SetPoint("LEFT", colPos.paused, 0)
-        pauseCheck:SetChecked(char.paused)
-        pauseCheck:SetScript("OnClick", function(self)
-            local isPaused = self:GetChecked()
-            Data:GetCharacterData(char.id).paused = isPaused
-            UI:UpdateTooltip()
-        end)
-        pauseCheck:SetScript("OnEnter", function(self)
-            GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-            GameTooltip:SetText("Pause Automation")
-            GameTooltip:AddLine("When checked, this character will not auto-deposit or withdraw", 1, 1, 1, true)
-            GameTooltip:Show()
-        end)
-        pauseCheck:SetScript("OnLeave", function() GameTooltip:Hide() end)
-        
-        -- Add delete button
-        local Data = WarbandAccountant.Data
-        local currentCharID = Data:GetCurrentCharacterID()
-        
-        -- Only show delete button if this is NOT the current character
-        if char.id ~= currentCharID then
-            local deleteBtn = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
-            deleteBtn:SetSize(50, 22)
-            deleteBtn:SetPoint("LEFT", colPos.delete, 0)
-            deleteBtn:SetText("Delete")
-            
-            -- Make the button red
-            local regions = {deleteBtn:GetRegions()}
-            for _, region in ipairs(regions) do
-                if region:GetObjectType() == "Texture" then
-                    region:SetVertexColor(0.8, 0.1, 0.1, 1)
-                end
-            end
-            
-            deleteBtn:SetScript("OnClick", function(self)
-                StaticPopup_Show("WARBANDACCOUNTANT_DELETE_CHARACTER", char.name, nil, char.id)
-            end)
-            
-            deleteBtn:SetScript("OnEnter", function(self)
-                GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-                GameTooltip:SetText("Delete Character")
-                GameTooltip:AddLine("Remove this character from tracking", 1, 1, 1, true)
-                GameTooltip:AddLine("|cFFFF0000This cannot be undone!|r", 1, 0, 0, true)
-                GameTooltip:Show()
-            end)
-            
-            deleteBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
-        end
-        
-        table.insert(mainFrame.targetRows, row)
-        yOffset = yOffset - rowHeight
-    end
-    
-    content:SetHeight(math.max(400, math.abs(yOffset)))
-    
-    if #charList == 0 then
-        local emptyText = content:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-        emptyText:SetPoint("CENTER", 0, 0)
-        emptyText:SetText("No characters found.\nLog in to other characters to add them.")
-        emptyText:SetJustifyH("CENTER")
-    end
-end
-
-function UI:UpdateWarbandLedger()
-    if not ledgerFrame or not ledgerFrame.warbandScrollContent then return end
-    local Data = WarbandAccountant.Data
-    local content = ledgerFrame.warbandScrollContent
-    local allEntries = Data:GetLedgerEntries(200)
-    local colPos = ledgerFrame.ledgerColPos or {
-        time = 15, char = 120, type = 260, amount = 400, balance = 560, note = 660
-    }
-    
-    -- Apply character filter
-    local entries = {}
-    for _, entry in ipairs(allEntries) do
-        if ledgerCharFilter == nil or entry.character == ledgerCharFilter then
-            table.insert(entries, entry)
-            if #entries >= 100 then break end
-        end
-    end
-    
-    for _, row in ipairs(ledgerFrame.warbandRows or {}) do if row then row:Hide() end end
-    wipe(ledgerFrame.warbandRows or {})
-    ledgerFrame.warbandRows = ledgerFrame.warbandRows or {}
-    
-    if ledgerFrame.warbandEmptyText then
-        ledgerFrame.warbandEmptyText:Hide()
-        ledgerFrame.warbandEmptyText = nil
-    end
-    
-    local totalDeposited, totalWithdrawn = Data:GetTotalLedgerStats()
-    local totalMade = totalDeposited - totalWithdrawn
-    
-    local madeColor, madePrefix
-    if totalMade > 0 then
-        madeColor = "|cFF00FF00"
-        madePrefix = "+"
-    elseif totalMade < 0 then
-        madeColor = "|cFFFF0000"
-        madePrefix = ""
-    else
-        madeColor = "|cFFFFFFFF"
-        madePrefix = ""
-    end
-    
-    local weeklyIncome = Data:GetWeeklyIncome()
-    local weeklyColor  = weeklyIncome >= 0 and "|cFF00FF00" or "|cFFFF0000"
-    local weeklySign   = weeklyIncome >= 0 and "+" or ""
-    
-    ledgerFrame.warbandStatsText:SetText(string.format(
-        "Deposited: |cFF00FF00%s|r  |  Withdrawn: |cFFFF0000%s|r  |  Made: %s%s%s|r  |  This Week: %s%s%s|r",
-        WarbandAccountant.FormatGold(totalDeposited),
-        WarbandAccountant.FormatGold(totalWithdrawn),
-        madeColor, madePrefix, WarbandAccountant.FormatGold(totalMade),
-        weeklyColor, weeklySign, WarbandAccountant.FormatGold(weeklyIncome)))
-    
-    if #entries == 0 then
-        local emptyText = content:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-        emptyText:SetPoint("CENTER", 0, 0)
-        if ledgerCharFilter then
-            emptyText:SetText("No transactions recorded for this character.")
-        else
-            emptyText:SetText("No transactions recorded yet.\nOpen your Warband Bank to record transfers.")
-        end
-        emptyText:SetJustifyH("CENTER")
-        content:SetHeight(400)
-        ledgerFrame.warbandEmptyText = emptyText
-        return
-    end
-    
-    local rowHeight = 24
-    local yOffset = 0
-    
-    for i, entry in ipairs(entries) do
-        local row = CreateFrame("Frame", nil, content)
-        row:SetSize(980, rowHeight)
-        row:SetPoint("TOPLEFT", 0, yOffset)
-        
-        if i % 2 == 0 then
-            row.bg = row:CreateTexture(nil, "BACKGROUND")
-            row.bg:SetAllPoints()
-            row.bg:SetColorTexture(0.2, 0.2, 0.2, 0.3)
-        end
-        
-        local timeText = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-        timeText:SetPoint("LEFT", colPos.time, 0)
-        timeText:SetText(FormatTimestamp(entry.timestamp))
-        timeText:SetTextColor(0.7, 0.7, 0.7)
-        
-        local charText = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-        charText:SetPoint("LEFT", colPos.char, 0)
-        charText:SetText(entry.characterName or "Unknown")
-        charText:SetWidth(120)
-        charText:SetJustifyH("LEFT")
-        
-        local typeText = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-        typeText:SetPoint("LEFT", colPos.type, 0)
-        if entry.type == "DEPOSIT" or entry.type == "MANUAL_DEPOSIT" then
-            typeText:SetText("Deposit")
-            typeText:SetTextColor(0, 1, 0)
-        else
-            typeText:SetText("Withdraw")
-            typeText:SetTextColor(1, 0, 0)
-        end
-        
-        local amountText = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-        amountText:SetPoint("LEFT", colPos.amount, 0)
-        amountText:SetText(WarbandAccountant.FormatGold(entry.amount))
-        amountText:SetJustifyH("RIGHT")
-        
-        local balanceText = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-        balanceText:SetPoint("LEFT", colPos.balance, 0)
-        balanceText:SetText(WarbandAccountant.FormatGold(entry.balanceAfter))
-        balanceText:SetTextColor(1, 0.82, 0)
-        balanceText:SetJustifyH("RIGHT")
-        
-        -- Note column
-        if colPos.note and entry.note and entry.note ~= "" then
-            local noteText = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-            noteText:SetPoint("LEFT", colPos.note, 0)
-            noteText:SetText(entry.note)
-            noteText:SetWidth(185)
-            noteText:SetJustifyH("LEFT")
-            noteText:SetTextColor(0.6, 0.6, 0.6)
-        end
-        
-        table.insert(ledgerFrame.warbandRows, row)
-        yOffset = yOffset - rowHeight
-    end
-    
-    content:SetHeight(math.max(400, math.abs(yOffset)))
-end
-
-function UI:ToggleMainWindow()
-    if not mainFrame then mainFrame = CreateMainWindow() end
-    if mainFrame:IsShown() then 
-        mainFrame:Hide()
-    else 
-        self:UpdateTargets()
-        mainFrame:Show() 
-    end
-end
-
-function UI:ToggleLedgerWindow()
-    if not ledgerFrame then ledgerFrame = CreateLedgerWindow() end
-    if ledgerFrame:IsShown() then 
-        ledgerFrame:Hide()
-    else 
-        self:UpdateWarbandLedger()
-        ledgerFrame:Show() 
-    end
-end
-
+-- Legacy compat for WarbandAccountant.Core.lua references
+function UI:ToggleMainWindow()   UI:Toggle("overview") end
+function UI:ToggleLedgerWindow() UI:Toggle("ledger")   end
+function UI:UpdateTargets()      UI:RefreshTargets()   end
+function UI:UpdateWarbandLedger() UI:RefreshLedger()   end
+function UI:RefreshTargetsTab()  UI:RefreshTargets()   end
 function UI:ResetFramePositions()
-    local Data = WarbandAccountant.Data
-    local db = Data:GetDB()
-    if db then
-        db.framePositions = nil
-    end
     if mainFrame then
         mainFrame:ClearAllPoints()
-        mainFrame:SetPoint("CENTER", 0, 0)
+        mainFrame:SetPoint("CENTER")
+        local db = WarbandAccountant.Data:GetDB()
+        if db then db.framePositions = nil end
     end
-    if ledgerFrame then
-        ledgerFrame:ClearAllPoints()
-        ledgerFrame:SetPoint("CENTER", 0, 0)
-    end
-    print("|cFF00FF00Warband Accountant:|r Window positions reset to center")
+    print("|cFF00FF00Warband Accountant:|r Window position reset.")
 end
 
-function UI:RefreshTargetsTab()
-    self:UpdateTargets()
-end
-
--- Delete character confirmation dialog
-StaticPopupDialogs["WARBANDACCOUNTANT_DELETE_CHARACTER"] = {
-    text = "Delete %s from Warband Accountant?\n\nThis will remove all tracking data for this character.\n\n|cFFFF0000This cannot be undone!|r",
-    button1 = "Delete",
-    button2 = "Cancel",
-    OnAccept = function(self, charID)
-        local Data = WarbandAccountant.Data
-        local success, result = Data:DeleteCharacter(charID)
-        if success then
-            print("|cFF00FF00Warband Accountant:|r Deleted character: " .. result)
-            UI:RefreshTargetsTab()
-            UI:UpdateTooltip()
-        else
-            print("|cFFFF0000Warband Accountant:|r " .. (result or "Could not delete character"))
-        end
-    end,
-    timeout = 0,
-    whileDead = true,
-    hideOnEscape = true,
-    preferredIndex = 3,
-}
-
--- ── Changelog ────────────────────────────────────────────────────────────────
--- Data lives in Changelog.lua (WarbandAccountant.Changelog / .ChangelogVersions)
--- Edit that file to add new versions — nothing here needs changing.
-
-local C_TITLE   = "00ccff"
-local C_VERSION = "ffcc00"
-local C_NEW     = "44ff88"
-local C_FIX     = "ff9944"
-local C_IMPROVE = "00ccff"
-
-local function wbaCol(hex, t) return "|cff" .. hex .. t .. "|r" end
-
-local FRAME_W   = 460
-local FRAME_H   = 380
-local PAD       = 16
-local CONTENT_W = FRAME_W - PAD * 2 - 20
-
-local wbaChangelogPopup = nil
-
-local function WBA_BuildChangelogContent(scrollChild, startVersion)
-    -- Clear previous content
-    if scrollChild._rows then
-        for _, w in ipairs(scrollChild._rows) do w:Hide(); w:SetParent(nil) end
-    end
-    scrollChild._rows = {}
-    local rows = scrollChild._rows
-
-    -- Read data from Changelog.lua via the shared addon table
-    local VERSIONS  = WarbandAccountant.ChangelogVersions or {}
-    local CHANGELOG = WarbandAccountant.Changelog         or {}
-
-    local yOff       = -PAD
-    local LH_VERSION = 24
-    local LH_TAG     = 20
-    local LH_BODY    = 16
-    local LH_GAP     = 6
-
-    -- Show startVersion and all older versions
-    local show = {}
-    local found = false
-    for _, v in ipairs(VERSIONS) do
-        if v == startVersion then found = true end
-        if found then table.insert(show, v) end
-    end
-    if #show == 0 then show = VERSIONS end
-
-    for vi, version in ipairs(show) do
-        local entries = CHANGELOG[version]
-        if entries then
-            -- Version header
-            local vh = scrollChild:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
-            vh:SetPoint("TOPLEFT", PAD, yOff)
-            vh:SetWidth(CONTENT_W)
-            vh:SetJustifyH("LEFT")
-            vh:SetText(wbaCol(C_VERSION, "Version " .. version))
-            table.insert(rows, vh)
-            yOff = yOff - LH_VERSION
-
-            -- Gold underline
-            local uline = scrollChild:CreateTexture(nil, "ARTWORK")
-            uline:SetColorTexture(1, 0.82, 0, 0.3)
-            uline:SetHeight(1)
-            uline:SetPoint("TOPLEFT", PAD, yOff)
-            uline:SetWidth(CONTENT_W)
-            table.insert(rows, uline)
-            yOff = yOff - 8
-
-            for _, entry in ipairs(entries) do
-                if entry.tag then
-                    -- Tagged line: [New] / [Fix] / [Improve]
-                    local tagHex = (entry.tag == "New") and C_NEW
-                               or (entry.tag == "Fix") and C_FIX
-                               or C_IMPROVE
-                    local fs = scrollChild:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-                    fs:SetPoint("TOPLEFT", PAD, yOff)
-                    fs:SetWidth(CONTENT_W)
-                    fs:SetJustifyH("LEFT")
-                    fs:SetText(wbaCol(tagHex, "[" .. entry.tag .. "]") .. " " .. entry.text)
-                    table.insert(rows, fs)
-                    yOff = yOff - LH_TAG
-                else
-                    -- Body / description line — indented, dimmer
-                    local fs = scrollChild:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-                    fs:SetPoint("TOPLEFT", PAD + 14, yOff)
-                    fs:SetWidth(CONTENT_W - 14)
-                    fs:SetJustifyH("LEFT")
-                    fs:SetTextColor(0.75, 0.75, 0.75)
-                    fs:SetText(entry.text)
-                    table.insert(rows, fs)
-                    yOff = yOff - math.max(LH_BODY, fs:GetStringHeight() + 2)
-                end
-                yOff = yOff - LH_GAP
-            end
-
-            if vi < #show then yOff = yOff - 10 end
-        end
-    end
-
-    scrollChild:SetHeight(math.max(300, math.abs(yOff) + PAD))
-end
-
-local function WBA_BuildChangelogFrame()
-    local popup = CreateFrame("Frame", "WBAChangelogFrame", UIParent, "ButtonFrameTemplate")
-    popup:SetSize(FRAME_W, FRAME_H)
-    popup:SetPoint("CENTER", UIParent, "CENTER", 0, 60)
-    popup:SetFrameStrata("DIALOG")
-    popup:SetMovable(true)
-    popup:EnableMouse(true)
-    popup:RegisterForDrag("LeftButton")
-    popup:SetScript("OnDragStart", popup.StartMoving)
-    popup:SetScript("OnDragStop",  popup.StopMovingOrSizing)
-    popup:EnableKeyboard(true)
-    popup:SetScript("OnKeyDown", function(self, key)
-        if key == "ESCAPE" then self:Hide(); self:SetPropagateKeyboardInput(false)
-        else self:SetPropagateKeyboardInput(true) end
-    end)
-    tinsert(UISpecialFrames, popup:GetName())
-    popup:Hide()
-
-    -- Portrait: show the container and set icon from Changelog.lua
-    if popup.PortraitContainer then
-        popup.PortraitContainer:Show()
-        local iconPath = WarbandAccountant.ChangelogIcon
-                      or "Interface\\AddOns\\WarbandAccountant\\Textures\\minimap"
-        local portrait = popup.PortraitContainer.portrait
-                      or _G[popup:GetName() .. "Portrait"]
-        if portrait then
-            portrait:SetTexture(iconPath)
-            portrait:SetTexCoord(0.07, 0.93, 0.07, 0.93)
-        else
-            local tex = popup.PortraitContainer:CreateTexture(nil, "ARTWORK")
-            tex:SetAllPoints(popup.PortraitContainer)
-            tex:SetTexture(iconPath)
-            tex:SetTexCoord(0.07, 0.93, 0.07, 0.93)
-        end
-    end
-    popup.TitleContainer.TitleText:SetText(
-        wbaCol(C_TITLE, "Warband Accountant") .. "  —  What's New")
-
-    -- Scroll area (inside the Inset)
-    local inset = popup.Inset
-    local scroll = CreateFrame("ScrollFrame", nil, inset, "UIPanelScrollFrameTemplate")
-    scroll:SetPoint("TOPLEFT",     inset, "TOPLEFT",     4,  -4)
-    scroll:SetPoint("BOTTOMRIGHT", inset, "BOTTOMRIGHT", -22, 36)
-
-    local scrollChild = CreateFrame("Frame")
-    scrollChild:SetWidth(CONTENT_W)
-    scroll:SetScrollChild(scrollChild)
-    popup.scrollChild = scrollChild
-
-    -- Footer buttons
-    local gotItBtn = CreateFrame("Button", nil, popup, "UIPanelButtonTemplate")
-    gotItBtn:SetSize(120, 26)
-    gotItBtn:SetPoint("CENTER", popup, "BOTTOM", 70, 14)
-    gotItBtn:SetText("Got it!")
-    gotItBtn:SetScript("OnClick", function() popup:Hide() end)
-
-    local optBtn = CreateFrame("Button", nil, popup, "UIPanelButtonTemplate")
-    optBtn:SetSize(120, 26)
-    optBtn:SetPoint("CENTER", popup, "BOTTOM", -70, 14)
-    optBtn:SetText("Open Options")
-    optBtn:SetScript("OnClick", function()
-        popup:Hide()
-        WarbandAccountant.Settings:OpenSettings()
-    end)
-
-    return popup
-end
-
-function UI:ShowChangelog(version)
-    if not wbaChangelogPopup then
-        wbaChangelogPopup = WBA_BuildChangelogFrame()
-    end
-
-    local popup = wbaChangelogPopup
-
-    if popup:IsShown() and popup.shownVersion == version then
-        popup:Hide()
-        return
-    end
-
-    popup.TitleContainer.TitleText:SetText(
-        wbaCol(C_TITLE, "Warband Accountant") .. "  —  What's New")
-
-    WBA_BuildChangelogContent(popup.scrollChild, version)
-    popup.shownVersion = version
-    popup:Show()
+-- Changelog popup compat -- now just opens the changelog tab
+function UI:ShowChangelog()
+    UI:Toggle("changelog")
 end
 
 function UI:CheckAndShowUpdateNotification()
     local Data = WarbandAccountant.Data
-    local lastSeenVersion = Data:GetLastSeenVersion()
-    local currentVersion  = Data:GetCurrentAddonVersion()
-
-    if lastSeenVersion ~= currentVersion then
-        Data:SetLastSeenVersion(currentVersion)
+    local lastSeen = Data:GetLastSeenVersion()
+    local current  = Data:GetCurrentAddonVersion()
+    if lastSeen ~= current then
+        Data:SetLastSeenVersion(current)
         C_Timer.After(0.5, function()
-            UI:ShowChangelog(currentVersion)
+            UI:Toggle("changelog")
         end)
     end
 end
+
+-- Delete character dialog (referenced from RefreshTargets)
+StaticPopupDialogs["WARBANDACCOUNTANT_DELETE_CHARACTER"] = {
+    text = "Delete %s from Warband Accountant?\n\n|cFFFF0000This cannot be undone!|r",
+    button1 = "Delete", button2 = "Cancel",
+    OnAccept = function(self, charID)
+        local Data = WarbandAccountant.Data
+        local ok, result = Data:DeleteCharacter(charID)
+        if ok then
+            print("|cFF00FF00Warband Accountant:|r Deleted: " .. result)
+            UI:RefreshTargets()
+            UI:UpdateTooltip()
+        else
+            print("|cFFFF0000Warband Accountant:|r " .. (result or "Could not delete"))
+        end
+    end,
+    timeout = 0, whileDead = true, hideOnEscape = true, preferredIndex = 3,
+}

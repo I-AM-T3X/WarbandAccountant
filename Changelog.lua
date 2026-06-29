@@ -20,6 +20,7 @@ local ADDON_NAME, WarbandAccountant = ...
 
 -- Ordered newest-first. Add new version strings here when releasing.
 WarbandAccountant.ChangelogVersions = {
+    "2.0.0",
     "1.0.7",
     "1.0.6",
     "1.0.5",
@@ -30,6 +31,19 @@ WarbandAccountant.ChangelogIcon = "Interface\\AddOns\\WarbandAccountant\\Texture
 
 -- Keyed by version string. Each value is a list of entry tables.
 WarbandAccountant.Changelog = {
+
+    ["2.0.0"] = {
+        { tag="New",     text="Unified Window UI" },
+        { tag=nil,       text="All panels (Overview, Targets, Ledger, Settings, Changelog) consolidated into a single window with a side navigation bar." },
+        { tag="New",     text="Overview / Dashboard Tab" },
+        { tag=nil,       text="At-a-glance stat cards for Warband Bank balance, Total Gold, Weekly Income, and Session change. Full character list below with current vs target comparison." },
+        { tag="New",     text="Inline Changelog Tab" },
+        { tag=nil,       text="Changelog is now a tab inside the main window instead of a popup." },
+        { tag="Improve", text="Settings moved into the addon window — Blizzard addon panel is now a lightweight stub." },
+        { tag="Improve", text="Right-click minimap button now opens directly to Settings tab." },
+        { tag="Improve", text="Slash commands expanded: /wba targets, /wba ledger, /wba settings, /wba changelog." },
+    },
+
 
     ["1.0.7"] = {
         { tag="Fix", text="Weekly Income displaying incorrectly" },
