@@ -378,23 +378,19 @@ function Core:GetPersonalGuildBankGold()
     local Data = WarbandAccountant.Data
     local db = Data:GetDB()
     if not db or not db.guildBankData then return 0, nil end
-    
+
+    local currentGuild = select(1, GetGuildInfo("player"))
     local currentRealm = GetRealmName()
-    
-    -- Prefer guild bank data on the current realm
-    for gName, data in pairs(db.guildBankData) do
-        if data and data.realm == currentRealm and (data.gold or 0) > 0 then
-            return data.gold, gName
+
+    -- Only show guild bank data if the character is in a guild
+    -- and we have cached data specifically for that guild.
+    if currentGuild then
+        local data = Data:GetGuildBankData(currentGuild)
+        if data and data.realm == currentRealm then
+            return data.gold or 0, currentGuild
         end
     end
-    
-    -- If nothing on current realm, use any available (in case of realm transfer)
-    for gName, data in pairs(db.guildBankData) do
-        if data and (data.gold or 0) > 0 then
-            return data.gold, gName
-        end
-    end
-    
+
     return 0, nil
 end
 

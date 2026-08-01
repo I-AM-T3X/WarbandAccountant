@@ -5,7 +5,7 @@ WarbandAccountant.Data = Data
 
 local DEFAULT_TARGET = 1000000
 local CURRENT_DB_VERSION = 1
-local CURRENT_ADDON_VERSION = "2.0.0"
+local CURRENT_ADDON_VERSION = "2.0.1"
 
 -- Weekly reset day by region (1=Sunday, 2=Monday, 3=Tuesday, 4=Wednesday, 5=Thursday, 6=Friday, 7=Saturday)
 -- WoW resets happen at specific times; we key off the weekday and treat the reset as midnight UTC that day.

@@ -20,6 +20,7 @@ local ADDON_NAME, WarbandAccountant = ...
 
 -- Ordered newest-first. Add new version strings here when releasing.
 WarbandAccountant.ChangelogVersions = {
+    "2.0.1",
     "2.0.0",
     "1.0.7",
     "1.0.6",
@@ -31,6 +32,13 @@ WarbandAccountant.ChangelogIcon = "Interface\\AddOns\\WarbandAccountant\\Texture
 
 -- Keyed by version string. Each value is a list of entry tables.
 WarbandAccountant.Changelog = {
+
+    ["2.0.1"] = {
+        { tag="Fix", text="Guild bank showing wrong guild's balance" },
+        { tag=nil,   text="Personal guild bank lookup could fall back to any cached guild data on the realm instead of the character's actual guild. Now only shows data for the guild you're currently in." },
+        { tag="Fix", text="Guild bank displaying 'None tracked' at 0 gold" },
+        { tag=nil,   text="Overview panel treated a tracked guild bank with a zero balance the same as no data at all. Now correctly shows the guild name with 0g instead of falling back to 'None tracked'." },
+    },
 
     ["2.0.0"] = {
         { tag="New",     text="Unified Window UI" },

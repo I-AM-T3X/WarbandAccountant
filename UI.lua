@@ -280,8 +280,8 @@ function UI:RefreshOverview()
 
     -- Guild bank
     local guildGold, guildName = WarbandAccountant.Core:GetGuildBankGold()
-    if guildGold and guildGold > 0 then
-        overviewGuildText:SetText("|cFF00FF00" .. (guildName or "?") .. "|r  " .. WarbandAccountant.FormatGold(guildGold))
+    if guildName then
+        overviewGuildText:SetText("|cFF00FF00" .. guildName .. "|r  " .. WarbandAccountant.FormatGold(guildGold or 0))
     else
         overviewGuildText:SetText("|cFF666666None tracked|r")
     end
