@@ -2,8 +2,8 @@
 ## Title: Warband Accountant
 ## Notes: Automated Warband gold management with per-character targets
 ## Author: I_AM_T3X
-## Version: 2.0.1
-## SavedVariables: WarbandAccountantDB
+## Version: 2.1.0
+## SavedVariables: WarbandAccountantDB, TokenPriceDisplayDB, TokenPriceDisplaySettings, TokenPriceHistoryDB
 
 # Libraries
 Libs\LibStub\LibStub.lua
@@ -14,6 +14,7 @@ Libs\LibDBIcon-1.0\LibDBIcon-1.0.lua
 # Addon files - order matters: Data -> Changelog -> Settings -> UI -> Core
 Data.lua
 Changelog.lua
+Token.lua
 Settings.lua
 UI.lua
 Core.lua

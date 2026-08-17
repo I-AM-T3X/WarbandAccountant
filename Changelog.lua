@@ -1,6 +1,6 @@
 local ADDON_NAME, WarbandAccountant = ...
 
--- ── Warband Accountant — Changelog Data ──────────────────────────────────────
+-- -- Warband Accountant -- Changelog Data --------------------------------------
 --
 -- This is the ONLY file you need to touch when shipping a new version.
 --
@@ -16,10 +16,11 @@ local ADDON_NAME, WarbandAccountant = ...
 --   { tag="Improve", text="Enhancement description" }     -- cyan   [Improve]
 --   { tag=nil,       text="Body / detail line" }          -- grey, indented under the above
 --
--- ─────────────────────────────────────────────────────────────────────────────
+-- -----------------------------------------------------------------------------
 
 -- Ordered newest-first. Add new version strings here when releasing.
 WarbandAccountant.ChangelogVersions = {
+    "2.1.0",
     "2.0.1",
     "2.0.0",
     "1.0.7",
@@ -32,6 +33,30 @@ WarbandAccountant.ChangelogIcon = "Interface\\AddOns\\WarbandAccountant\\Texture
 
 -- Keyed by version string. Each value is a list of entry tables.
 WarbandAccountant.Changelog = {
+
+    ["2.1.0"] = {
+        { tag="New",     text="Token Price Display merged in" },
+        { tag=nil,       text="Warband Accountant now includes WoW Token price tracking, formerly its own standalone addon. All Token Price Display settings and history carry over automatically." },
+        { tag="New",     text="Token History Tab" },
+        { tag=nil,       text="A new tab in the side nav shows a clean price history line graph with session high/low stats and per-point tooltips." },
+        { tag="New",     text="WoW Token stat card" },
+        { tag=nil,       text="The Overview dashboard now shows the current Token price alongside Warband Bank, Total Gold, and Weekly Income." },
+        { tag="New",     text="Token Price settings" },
+        { tag=nil,       text="Update frequency, display style, change arrow, and price alerts are now configured from the Settings tab. The floating price frame can still be shown or hidden independently." },
+        { tag="New",     text="Legacy data import" },
+        { tag=nil,       text="A button in Token Price settings verifies and imports price history from the standalone Token Price Display addon if it's still installed." },
+        { tag="Improve", text="Settings tab now scrolls" },
+        { tag=nil,       text="The Settings tab content is wrapped in a scroll frame so it never overflows the window, regardless of how many sections are added." },
+        { tag="Improve", text="Minimap tooltip shows Token price" },
+        { tag=nil,       text="When the floating Token price frame is hidden, the current price appears in the minimap tooltip instead, right below Warband Bank." },
+        { tag="Improve", text="Consistent gold formatting" },
+        { tag=nil,       text="Token price now uses the same gold/silver/copper color-coded format as the rest of the addon, with two-digit padding for silver and copper." },
+        { tag="Improve", text="Slash commands expanded: /wba token." },
+        { tag="Improve", text="Category default targets now apply to all characters" },
+        { tag=nil,       text="Changing a category's default gold target in Settings immediately updates all characters assigned to that category. A chat message confirms which characters were updated and to what amount." },
+        { tag="Improve", text="\"Total Gold\" renamed to \"Gold in Bags\"" },
+        { tag=nil,       text="The Overview stat card and minimap tooltip now use the more descriptive label \"Gold in Bags\" to clarify it represents the sum of gold held across all tracked characters." },
+    },
 
     ["2.0.1"] = {
         { tag="Fix", text="Guild bank showing wrong guild's balance" },
@@ -47,7 +72,7 @@ WarbandAccountant.Changelog = {
         { tag=nil,       text="At-a-glance stat cards for Warband Bank balance, Total Gold, Weekly Income, and Session change. Full character list below with current vs target comparison." },
         { tag="New",     text="Inline Changelog Tab" },
         { tag=nil,       text="Changelog is now a tab inside the main window instead of a popup." },
-        { tag="Improve", text="Settings moved into the addon window — Blizzard addon panel is now a lightweight stub." },
+        { tag="Improve", text="Settings moved into the addon window -- Blizzard addon panel is now a lightweight stub." },
         { tag="Improve", text="Right-click minimap button now opens directly to Settings tab." },
         { tag="Improve", text="Slash commands expanded: /wba targets, /wba ledger, /wba settings, /wba changelog." },
     },
@@ -63,13 +88,13 @@ WarbandAccountant.Changelog = {
     ["1.0.6"] = {
         { tag="Fix", text="Weekly Income Reset Timestamp" },
         { tag=nil,   text="Fixed an issue where the weekly income counter was calculating the reset time incorrectly, causing it to show a much lower number than expected." },
-        { tag=nil,   text="The reset now targets the exact server reset time per region — NA: Tuesday 9AM PDT, EU: Wednesday 8AM CEST, KR/TW: Thursday 10AM KST." },
+        { tag=nil,   text="The reset now targets the exact server reset time per region -- NA: Tuesday 9AM PDT, EU: Wednesday 8AM CEST, KR/TW: Thursday 10AM KST." },
     },
 
     ["1.0.5"] = {
         { tag="New",     text="Weekly Income Tracking" },
         { tag=nil,       text="Tracks net gold earned across all characters since your weekly reset." },
-        { tag=nil,       text="Resets automatically per region — NA: Tuesday, EU: Wednesday, KR/TW: Thursday." },
+        { tag=nil,       text="Resets automatically per region -- NA: Tuesday, EU: Wednesday, KR/TW: Thursday." },
         { tag=nil,       text="Failsafe accumulator records income even if the ledger fills up mid-week." },
         { tag="New",     text="Ledger Character Filter" },
         { tag=nil,       text="New dropdown in the Ledger lets you view one character's transactions at a time." },
@@ -80,7 +105,7 @@ WarbandAccountant.Changelog = {
         { tag="Improve", text="Ledger history expanded from 500 to 1000 entries." },
         { tag="Improve", text="Tooltip shows 'This Week' income below Total Session." },
         { tag="Improve", text="Ledger stats bar includes the weekly income figure." },
-        { tag="Improve", text="TOC updated for patch 12.0.7 — Midnight: Revelations." },
+        { tag="Improve", text="TOC updated for patch 12.0.7 -- Midnight: Revelations." },
     },
 
     ["1.0.4"] = {

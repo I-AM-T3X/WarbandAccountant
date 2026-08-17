@@ -5,7 +5,7 @@ WarbandAccountant.Data = Data
 
 local DEFAULT_TARGET = 1000000
 local CURRENT_DB_VERSION = 1
-local CURRENT_ADDON_VERSION = "2.0.1"
+local CURRENT_ADDON_VERSION = "2.1.0"
 
 -- Weekly reset day by region (1=Sunday, 2=Monday, 3=Tuesday, 4=Wednesday, 5=Thursday, 6=Friday, 7=Saturday)
 -- WoW resets happen at specific times; we key off the weekday and treat the reset as midnight UTC that day.
@@ -20,7 +20,6 @@ local REGION_RESET_DAYS = {
 local DEFAULT_RESET_DAY = 3
 
 local db = nil
-local sessionData = {}
 
 local function GetCharacterFullName()
     local name = UnitName("player")
@@ -111,19 +110,6 @@ function Data:Init()
         end
     end
     
-    self:InitSessionData(charID)
-    self:UpdateCharacterCache()
-end
-
-function Data:InitSessionData(charID)
-    charID = charID or GetCharacterFullName()
-    if not sessionData[charID] then
-        local currentMoney = GetMoney()
-        sessionData[charID] = {
-            startGold = currentMoney,
-            lastGold = currentMoney
-        }
-    end
 end
 
 function Data:UpdateCharacterGold()
@@ -133,39 +119,7 @@ function Data:UpdateCharacterGold()
     local currentGold = GetMoney()
     db.characters[charID].currentGold = currentGold
     db.characters[charID].lastUpdate = time()
-    
-    self:InitSessionData(charID)
-    sessionData[charID].lastGold = currentGold
-end
 
-function Data:GetSessionChange(charID)
-    charID = charID or GetCharacterFullName()
-    if not sessionData[charID] then return 0 end
-    
-    local startGold = sessionData[charID].startGold or 0
-    local currentGold = (db and db.characters and db.characters[charID] and db.characters[charID].currentGold) or 0
-    
-    return currentGold - startGold
-end
-
-function Data:GetTotalSessionChange()
-    if not db or not db.characters then return 0 end
-    local total = 0
-    for charID, _ in pairs(db.characters) do
-        total = total + self:GetSessionChange(charID)
-    end
-    return total
-end
-
-function Data:ResetSession(charID)
-    charID = charID or GetCharacterFullName()
-    if db and db.characters and db.characters[charID] then
-        local current = db.characters[charID].currentGold or GetMoney()
-        sessionData[charID] = {
-            startGold = current,
-            lastGold = current
-        }
-    end
 end
 
 function Data:GetCurrentCharacterID()
@@ -227,21 +181,7 @@ function Data:IsConfirmationRequired()
     return db.global.confirmTransfers
 end
 
-function Data:IsCharacterPaused(charID)
-    charID = charID or GetCharacterFullName()
-    if not db or not db.characters then return false end
-    local char = db.characters[charID]
-    return char and char.paused or false
-end
 
-function Data:ToggleCharacterPause(charID)
-    charID = charID or GetCharacterFullName()
-    if db and db.characters and db.characters[charID] then
-        db.characters[charID].paused = not db.characters[charID].paused
-        return db.characters[charID].paused
-    end
-    return false
-end
 
 function Data:GetDefaultTarget(charType)
     if not db or not db.global then return 1000000 end
@@ -281,11 +221,6 @@ function Data:SetCharacterType(charID, charType)
     end
 end
 
-function Data:GetCharacterSortOrder(charID)
-    charID = charID or GetCharacterFullName()
-    if not db or not db.characters then return 0 end
-    return db.characters[charID] and db.characters[charID].sortOrder or 0
-end
 
 function Data:SetCharacterSortOrder(charID, order)
     charID = charID or GetCharacterFullName()
@@ -361,29 +296,7 @@ function Data:ResetLedgerTotals()
     db.ledger = {}
 end
 
-function Data:UpdateCharacterCache()
-    if not db or not db.characters then return {} end
-    local cache = {}
-    for id, data in pairs(db.characters) do
-        cache[id] = {
-            name = data.name,
-            realm = data.realm,
-            class = data.class,
-            currentGold = data.currentGold or 0,
-            targetGold = data.targetGold or DEFAULT_TARGET,
-            enabled = data.enabled ~= false,
-            paused = data.paused or false,
-            charType = data.charType,
-            sortOrder = data.sortOrder or 0,
-            added = data.added or 0
-        }
-    end
-    return cache
-end
 
-function Data:GetCachedCharacters()
-    return self:UpdateCharacterCache()
-end
 
 function Data:GetSortMode()
     if not db or not db.global then return "arrow" end
@@ -450,64 +363,10 @@ function Data:ClearGuildBankData(guildName)
     end
 end
 
-function Data:AddGuildLedgerEntry(entry)
-    if not db or not self:IsGuildMaster() then return end
-    db.guildLedger = db.guildLedger or {}
-    
-    table.insert(db.guildLedger, 1, {
-        timestamp = time(),
-        player = entry.player or "Unknown",
-        amount = entry.amount or 0,
-        type = entry.type,
-        years = entry.years or 0,
-        months = entry.months or 0,
-        days = entry.days or 0,
-        hours = entry.hours or 0,
-        note = entry.note or ""
-    })
-    
-    if #db.guildLedger > 500 then
-        for i = 501, #db.guildLedger do
-            db.guildLedger[i] = nil
-        end
-    end
-    
-    if entry.type == "deposit" then
-        db.guildSettings.totalGuildDeposited = (db.guildSettings.totalGuildDeposited or 0) + (entry.amount or 0)
-    elseif entry.type == "withdraw" then
-        db.guildSettings.totalGuildWithdrawn = (db.guildSettings.totalGuildWithdrawn or 0) + (entry.amount or 0)
-    end
-    
-    db.guildSettings.lastScan = time()
-end
 
-function Data:GetGuildLedgerEntries(limit)
-    if not db or not db.guildLedger then return {} end
-    limit = limit or 50
-    local entries = {}
-    for i = 1, math.min(limit, #db.guildLedger) do
-        table.insert(entries, db.guildLedger[i])
-    end
-    return entries
-end
 
-function Data:GetGuildLedgerStats()
-    if not db or not db.guildSettings then return 0, 0, 0 end
-    return db.guildSettings.totalGuildDeposited or 0, 
-           db.guildSettings.totalGuildWithdrawn or 0,
-           db.guildSettings.lastScan or 0
-end
 
-function Data:ClearGuildLedger()
-    if not self:IsGuildMaster() then return end
-    db.guildLedger = {}
-    db.guildSettings.totalGuildDeposited = 0
-    db.guildSettings.totalGuildWithdrawn = 0
-end
 
-function Data:ShouldShowGuildBankFeatures()
-    return self:IsGuildMaster()
-end
 
 -- -- Weekly Income Tracking ----------------------------------------------------
 -- Weekly Income = Bank balance now - Bank balance at last reset.
@@ -608,10 +467,6 @@ function Data:DeleteCharacter(charID)
     local charName = db.characters[charID].name or "Unknown"
     db.characters[charID] = nil
     
-    -- Clear any session data
-    if sessionData[charID] then
-        sessionData[charID] = nil
-    end
     
     return true, charName
 end

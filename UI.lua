@@ -6,7 +6,6 @@ WarbandAccountant.UI = UI
 local NAV_W         = 150
 local WIN_W         = 1100
 local WIN_H         = 660
-local CONTENT_X     = NAV_W + 12
 local CONTENT_W     = WIN_W - NAV_W - 28
 local CONTENT_H     = WIN_H - 54
 local NAV_BTN_H     = 40
@@ -29,40 +28,18 @@ local hasLibDBIcon = LibStub and LibStub("LibDBIcon-1.0", true)
 local hasLDB       = LibStub and LibStub("LibDataBroker-1.1", true)
 
 -- -- Utility -------------------------------------------------------------------
-local function FormatGoldShort(copper)
-    if not copper then return "0g" end
-    local abs = math.abs(copper)
-    local sign = copper < 0 and "-" or ""
-    if abs >= 10000 then
-        return string.format("%s%.1fg", sign, abs / 10000)
-    elseif abs >= 100 then
-        return string.format("%s%.1fs", sign, abs / 100)
-    else
-        return string.format("%s%dc", sign, abs)
-    end
-end
-
 local function FormatTimestamp(ts)
     if not ts then return "" end
     local d = date("*t", ts)
     return string.format("%02d/%02d %02d:%02d", d.month, d.day, d.hour, d.min)
 end
 
-local function MakeLabel(parent, text, fontObj, x, y, w, color)
-    local fs = parent:CreateFontString(nil, "OVERLAY", fontObj or "GameFontNormal")
-    if x and y then fs:SetPoint("TOPLEFT", x, y) end
-    if w then fs:SetWidth(w) end
-    if color then fs:SetTextColor(color.r, color.g, color.b) end
-    if text then fs:SetText(text) end
-    return fs
-end
-
 local function MakeSeparator(parent, yOff)
     local sep = parent:CreateTexture(nil, "ARTWORK")
     sep:SetColorTexture(0.3, 0.3, 0.3, 0.6)
     sep:SetHeight(1)
-    sep:SetPoint("TOPLEFT",  parent, "TOPLEFT",  0, yOff)
-    sep:SetPoint("TOPRIGHT", parent, "TOPRIGHT", 0, yOff)
+    sep:SetPoint("TOPLEFT",  parent, "TOPLEFT",  0,  yOff)
+    sep:SetPoint("TOPRIGHT", parent, "TOPRIGHT", -2, yOff)
     return sep
 end
 
@@ -147,6 +124,10 @@ function UI:SwitchTab(tabKey)
         UI:RefreshTargets()
     elseif tabKey == "ledger" then
         UI:RefreshLedger()
+    elseif tabKey == "token" then
+        UI:RefreshToken()
+    elseif tabKey == "tokenhistory" then
+        UI:RefreshTokenHistory()
     elseif tabKey == "changelog" then
         UI:RefreshChangelog()
     end
@@ -211,14 +192,14 @@ local overviewGuildText
 
 local function BuildOverviewTab(panel)
     local cw    = CONTENT_W
-    local cardW = math.floor((cw - 40) / 4)
+    local cardW = math.floor((cw - 10*3) / 4)
     local cardH = 85
     local cardY = -10
 
-    overviewCards.warband = CreateStatCard(panel, "Warband Bank",      10,               cardY, cardW, cardH)
-    overviewCards.total   = CreateStatCard(panel, "Total Gold",        10 + cardW + 10,  cardY, cardW, cardH)
-    overviewCards.weekly  = CreateStatCard(panel, "This Week",         10 + (cardW+10)*2, cardY, cardW, cardH)
-    overviewCards.session = CreateStatCard(panel, "Session",           10 + (cardW+10)*3, cardY, cardW, cardH)
+    overviewCards.warband = CreateStatCard(panel, "Warband Bank",      6,                cardY, cardW, cardH)
+    overviewCards.total   = CreateStatCard(panel, "Gold in Bags",        6 + (cardW+10),   cardY, cardW, cardH)
+    overviewCards.weekly  = CreateStatCard(panel, "This Week",         6 + (cardW+10)*2, cardY, cardW, cardH)
+    overviewCards.token   = CreateStatCard(panel, "WoW Token",         6 + (cardW+10)*3, cardY, cardW, cardH)
 
     -- Guild bank line
     local guildLabel = panel:CreateFontString(nil, "OVERLAY", "GameFontNormal")
@@ -272,11 +253,15 @@ function UI:RefreshOverview()
     overviewCards.weekly.value:SetText(ws .. WarbandAccountant.FormatGold(weekly))
     overviewCards.weekly.value:SetTextColor(wc.r, wc.g, wc.b)
 
-    local session = Data:GetTotalSessionChange()
-    local sc2 = session >= 0 and COLOR_GREEN or COLOR_RED
-    local ss = session >= 0 and "+" or ""
-    overviewCards.session.value:SetText(ss .. WarbandAccountant.FormatGold(session))
-    overviewCards.session.value:SetTextColor(sc2.r, sc2.g, sc2.b)
+    -- Token price
+    local tokenPrice = WarbandAccountant.Token and WarbandAccountant.Token:GetCurrentPrice()
+    if tokenPrice then
+        overviewCards.token.value:SetText(WarbandAccountant.Token.FormatGold(tokenPrice))
+        overviewCards.token.value:SetTextColor(COLOR_WHITE.r, COLOR_WHITE.g, COLOR_WHITE.b)
+    else
+        overviewCards.token.value:SetText("Loading...")
+        overviewCards.token.value:SetTextColor(COLOR_GREY.r, COLOR_GREY.g, COLOR_GREY.b)
+    end
 
     -- Guild bank
     local guildGold, guildName = WarbandAccountant.Core:GetGuildBankGold()
@@ -832,9 +817,14 @@ end
 -- ===============================================================================
 -- SETTINGS TAB
 -- ===============================================================================
-local function BuildSettingsTab(panel)
+local function BuildSettingsTab(outerPanel)
     local Data = WarbandAccountant.Data
-    local cw = CONTENT_W
+
+    -- Wrap all settings content in a scroll frame so it never overflows the window
+    local sf, panel = CreateScrollArea(outerPanel, 0, -4, CONTENT_W, CONTENT_H - 8)
+    panel:SetHeight(1)  -- grown at the end based on actual content
+    local cw = CONTENT_W - 24
+
     local y  = -15
 
     -- Helper: section box
@@ -1002,10 +992,38 @@ local function BuildSettingsTab(panel)
         gLbl:SetPoint("LEFT", goldEB, "RIGHT", 2, 0)
         gLbl:SetText("g")
         gLbl:SetTextColor(COLOR_GOLD.r, COLOR_GOLD.g, COLOR_GOLD.b)
+        local goldSaved = false
         local function SaveGold(self)
-            Data:SetDefaultTarget(key, (tonumber(self:GetText()) or 0) * 10000)
+            if goldSaved then goldSaved = false; return end
+            local newTarget = (tonumber(self:GetText()) or 0) * 10000
+            Data:SetDefaultTarget(key, newTarget)
+            -- Update all characters currently assigned to this category
+            local chars = Data:GetAllCharacters()
+            local updated = {}
+            for charID, charData in pairs(chars) do
+                if charData.charType == key then
+                    Data:SetCharacterTarget(charID, newTarget)
+                    table.insert(updated, charData.name or charID)
+                end
+            end
+            if activeTab == "targets" then UI:RefreshTargets() end
+            if activeTab == "overview" then UI:RefreshOverview() end
+            local catName = Data:GetCategoryName(key)
+            if #updated > 0 then
+                table.sort(updated)
+                print(string.format("|cFFFFD700Warband Accountant:|r Updated %s target to %s for %d character%s: %s",
+                    catName,
+                    WarbandAccountant.FormatGold(newTarget),
+                    #updated,
+                    #updated == 1 and "" or "s",
+                    table.concat(updated, ", ")))
+            else
+                print(string.format("|cFFFFD700Warband Accountant:|r %s default target set to %s (no characters currently assigned).",
+                    catName,
+                    WarbandAccountant.FormatGold(newTarget)))
+            end
         end
-        goldEB:SetScript("OnEnterPressed", function(self) self:ClearFocus(); SaveGold(self) end)
+        goldEB:SetScript("OnEnterPressed", function(self) goldSaved = true; self:ClearFocus(); SaveGold(self) end)
         goldEB:SetScript("OnEditFocusLost", SaveGold)
     end
 
@@ -1019,9 +1037,160 @@ local function BuildSettingsTab(panel)
     noteFs:SetTextColor(COLOR_GREY.r, COLOR_GREY.g, COLOR_GREY.b)
     noteFs:SetWidth(cw - 40)
 
+    -- -- Token Price section ---------------------------------------------------
+    local Token = WarbandAccountant.Token
+    local tokenSettings = Token and Token:GetSettings()
+    local tokenY = tgtY - tgtBoxH - 12
+    local tokenBoxH = 188
+    local tokenBox = Section("Token Price", 10, tokenY, cw - 20, tokenBoxH)
+
+    if Token and tokenSettings then
+        -- Row 1: Update Frequency + Floating Frame dropdowns
+        local freqLbl = tokenBox:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        freqLbl:SetPoint("TOPLEFT", 12, -30)
+        freqLbl:SetText("Update Frequency:")
+        freqLbl:SetTextColor(COLOR_GREY.r, COLOR_GREY.g, COLOR_GREY.b)
+
+        local freqDD = CreateFrame("Frame", "WBATokenFreqDD", tokenBox, "UIDropDownMenuTemplate")
+        freqDD:SetPoint("LEFT", freqLbl, "RIGHT", 0, -2)
+        UIDropDownMenu_SetWidth(freqDD, 110)
+        local function FreqText(v)
+            for _, opt in ipairs(Token.FREQUENCY_OPTIONS) do
+                if opt.value == v then return opt.text end
+            end
+            return "5 minutes"
+        end
+        UIDropDownMenu_SetText(freqDD, FreqText(tokenSettings.updateInterval))
+        UIDropDownMenu_Initialize(freqDD, function()
+            for _, opt in ipairs(Token.FREQUENCY_OPTIONS) do
+                local info = UIDropDownMenu_CreateInfo()
+                info.text = opt.text
+                info.arg1 = opt.value
+                info.checked = (tokenSettings.updateInterval == opt.value)
+                info.func = function(btn, arg1)
+                    tokenSettings.updateInterval = arg1
+                    UIDropDownMenu_SetText(freqDD, btn:GetText())
+                    Token:RestartTicker()
+                end
+                UIDropDownMenu_AddButton(info)
+            end
+        end)
+
+        local showLbl = tokenBox:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        showLbl:SetPoint("LEFT", freqDD, "RIGHT", 36, 2)
+        showLbl:SetText("Floating Frame:")
+        showLbl:SetTextColor(COLOR_GREY.r, COLOR_GREY.g, COLOR_GREY.b)
+
+        local showDD = CreateFrame("Frame", "WBATokenShowDD", tokenBox, "UIDropDownMenuTemplate")
+        showDD:SetPoint("LEFT", showLbl, "RIGHT", 0, -2)
+        UIDropDownMenu_SetWidth(showDD, 70)
+        UIDropDownMenu_SetText(showDD, tokenSettings.showFloatingFrame ~= false and "Yes" or "No")
+        UIDropDownMenu_Initialize(showDD, function()
+            local info = UIDropDownMenu_CreateInfo()
+            info.text = "Yes"; info.arg1 = true
+            info.checked = tokenSettings.showFloatingFrame ~= false
+            info.func = function(btn, arg1)
+                Token:SetShowFloatingFrame(arg1)
+                UIDropDownMenu_SetText(showDD, "Yes")
+            end
+            UIDropDownMenu_AddButton(info)
+            info = UIDropDownMenu_CreateInfo()
+            info.text = "No"; info.arg1 = false
+            info.checked = tokenSettings.showFloatingFrame == false
+            info.func = function(btn, arg1)
+                Token:SetShowFloatingFrame(arg1)
+                UIDropDownMenu_SetText(showDD, "No")
+            end
+            UIDropDownMenu_AddButton(info)
+        end)
+
+        -- Row 2: Icon mode + arrow checkboxes, side by side
+        MakeCB(tokenBox, "Show token icon instead of label", 10, -64,
+            function() return tokenSettings.displayType == "icon" end,
+            function(v)
+                tokenSettings.displayType = v and "icon" or "text"
+                Token.ApplySettings()
+            end)
+        MakeCB(tokenBox, "Show price change arrow", math.floor(cw/2), -64,
+            function() return tokenSettings.showArrow end,
+            function(v)
+                tokenSettings.showArrow = v
+                Token.ApplySettings()
+            end)
+
+        -- Row 3: Enable alerts checkbox
+        MakeCB(tokenBox, "Enable price alerts (4 min cooldown)", 10, -94,
+            function() return tokenSettings.alertEnabled end,
+            function(v) tokenSettings.alertEnabled = v end)
+
+        -- Row 4: Alert thresholds, own clear row below the checkbox
+        local alertLbl = tokenBox:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        alertLbl:SetPoint("TOPLEFT", 34, -124)
+        alertLbl:SetText("Thresholds (gold):")
+        alertLbl:SetTextColor(COLOR_GREY.r, COLOR_GREY.g, COLOR_GREY.b)
+
+        local lowLbl = tokenBox:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        lowLbl:SetPoint("LEFT", alertLbl, "RIGHT", 16, 0)
+        lowLbl:SetText("Low:")
+        lowLbl:SetTextColor(COLOR_WHITE.r, COLOR_WHITE.g, COLOR_WHITE.b)
+
+        local lowEB = CreateFrame("EditBox", nil, tokenBox, "InputBoxTemplate")
+        lowEB:SetSize(80, 22)
+        lowEB:SetPoint("LEFT", lowLbl, "RIGHT", 8, 0)
+        lowEB:SetAutoFocus(false)
+        lowEB:SetNumeric(true)
+        lowEB:SetText(tokenSettings.alertLowThreshold and tostring(tokenSettings.alertLowThreshold) or "")
+        local function SaveLow(self)
+            local n = tonumber(self:GetText())
+            tokenSettings.alertLowThreshold = (n and n >= 0) and n or nil
+        end
+        lowEB:SetScript("OnEnterPressed", function(self) self:ClearFocus(); SaveLow(self) end)
+        lowEB:SetScript("OnEditFocusLost", SaveLow)
+
+        local highLbl = tokenBox:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        highLbl:SetPoint("LEFT", lowEB, "RIGHT", 20, 0)
+        highLbl:SetText("High:")
+        highLbl:SetTextColor(COLOR_WHITE.r, COLOR_WHITE.g, COLOR_WHITE.b)
+
+        local highEB = CreateFrame("EditBox", nil, tokenBox, "InputBoxTemplate")
+        highEB:SetSize(80, 22)
+        highEB:SetPoint("LEFT", highLbl, "RIGHT", 8, 0)
+        highEB:SetAutoFocus(false)
+        highEB:SetNumeric(true)
+        highEB:SetText(tokenSettings.alertHighThreshold and tostring(tokenSettings.alertHighThreshold) or "")
+        local function SaveHigh(self)
+            local n = tonumber(self:GetText())
+            tokenSettings.alertHighThreshold = (n and n >= 0) and n or nil
+        end
+        highEB:SetScript("OnEnterPressed", function(self) self:ClearFocus(); SaveHigh(self) end)
+        highEB:SetScript("OnEditFocusLost", SaveHigh)
+
+        -- Row 5: Import legacy data from standalone Token Price Display addon
+        local importBtn = CreateFrame("Button", nil, tokenBox, "UIPanelButtonTemplate")
+        importBtn:SetSize(190, 22)
+        importBtn:SetPoint("TOPLEFT", 10, -154)
+        importBtn:SetText("Import Legacy Token Data")
+        importBtn:SetScript("OnClick", function()
+            local count, err = Token:ImportLegacyHistory()
+            if err and count == 0 then
+                print("|cFFFF0000Warband Accountant:|r " .. err)
+            else
+                print(string.format("|cFF00FF00Warband Accountant:|r Imported/verified %d price history entries.", count))
+                if activeTab == "token" then UI:RefreshToken() end
+            end
+        end)
+
+        local importDesc = tokenBox:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        importDesc:SetPoint("LEFT", importBtn, "RIGHT", 10, 0)
+        importDesc:SetWidth(cw - 240)
+        importDesc:SetJustifyH("LEFT")
+        importDesc:SetText("Pulls history from the old standalone Token Price Display addon, if installed.")
+        importDesc:SetTextColor(COLOR_GREY.r, COLOR_GREY.g, COLOR_GREY.b)
+    end
+
     -- -- Danger Zone ----------------------------------------------------------
-    local resetY   = tgtY - tgtBoxH - 12
-    local resetBox = Section("Danger Zone", 10, resetY, cw - 20, 150)
+    local resetY   = tokenY - tokenBoxH - 12
+    local resetBox = Section("Danger Zone", 10, resetY, cw - 20, 184)
 
     local function DangerBtn(label, x, yOff, onClick)
         local btn = CreateFrame("Button", nil, resetBox, "UIPanelButtonTemplate")
@@ -1056,7 +1225,12 @@ local function BuildSettingsTab(panel)
     end)
     DangerDesc(resetBox, clearBtn, "Removes all transaction history from the Ledger tab.")
 
-    local resetPosBtn = DangerBtn("Reset Window Position", 10, -96, function()
+    local clearTokenBtn = DangerBtn("Clear Token History", 10, -96, function()
+        StaticPopup_Show("WARBANDACCOUNTANT_CLEAR_TOKEN_HISTORY")
+    end)
+    DangerDesc(resetBox, clearTokenBtn, "Removes all stored Token price data points.")
+
+    local resetPosBtn = DangerBtn("Reset Window Position", 10, -130, function()
         if mainFrame then
             mainFrame:ClearAllPoints()
             mainFrame:SetPoint("CENTER")
@@ -1065,6 +1239,18 @@ local function BuildSettingsTab(panel)
         end
         print("|cFF00FF00Warband Accountant:|r Window position reset.")
     end)
+
+    StaticPopupDialogs["WARBANDACCOUNTANT_CLEAR_TOKEN_HISTORY"] = {
+        text = "Clear all Token price history?\n\n|cFFFF0000This cannot be undone.|r",
+        button1 = "Yes", button2 = "No",
+        OnAccept = function()
+            local Token = WarbandAccountant.Token
+            if Token then Token:ClearHistory() end
+            if activeTab == "token" then UI:RefreshToken() end
+            if activeTab == "tokenhistory" then UI:RefreshTokenHistory() end
+        end,
+        timeout = 0, whileDead = true, hideOnEscape = true,
+    }
 
     StaticPopupDialogs["WARBANDACCOUNTANT_RESET_TOTALS"] = {
         text = "Reset all-time deposit/withdrawal statistics?\n\n|cFFFF0000This cannot be undone.|r",
@@ -1086,6 +1272,381 @@ local function BuildSettingsTab(panel)
         timeout = 0, whileDead = true, hideOnEscape = true,
     }
 
+    -- Grow the scroll content to fit everything (resetY is negative, resetBox height is 150)
+    panel:SetHeight(math.abs(resetY) + 150 + 20)
+end
+
+-- ===============================================================================
+-- TOKEN GRAPH TAB
+-- ===============================================================================
+local tokenGraph, tokenStatsText, tokenMinLabel, tokenMaxLabel, tokenCurrentLabel
+local tokenGraphBars, tokenGraphPoints = {}, {}
+
+local function BuildTokenTab(panel)
+    local Token = WarbandAccountant.Token
+    local cw = CONTENT_W
+
+    local topLabel = panel:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    topLabel:SetPoint("TOPLEFT", 10, -8)
+    topLabel:SetText("WoW Token Price Graph - Last 100 Entries")
+    topLabel:SetTextColor(COLOR_GOLD.r, COLOR_GOLD.g, COLOR_GOLD.b)
+
+    local tokenSep = panel:CreateTexture(nil, "ARTWORK")
+    tokenSep:SetColorTexture(0.3, 0.3, 0.3, 0.6)
+    tokenSep:SetHeight(1)
+    tokenSep:SetPoint("TOPLEFT",  panel, "TOPLEFT",  0, -32)
+    tokenSep:SetPoint("TOPRIGHT", panel, "TOPRIGHT", -2, -32)
+
+    local graphH = CONTENT_H - 150
+    local graph = CreateFrame("Frame", nil, panel, "BackdropTemplate")
+    graph:SetPoint("TOPLEFT", -10, -42)
+    graph:SetSize(cw - 10, graphH)
+    graph:SetBackdrop({
+        bgFile = "Interface\\Buttons\\WHITE8X8",
+    })
+    graph:SetBackdropColor(0.05, 0.05, 0.05, 0.55)
+    graph.gridLines = {}
+    graph.lineSegs = {}
+    graph.fillSegs = {}
+    graph.points = {}
+
+    tokenMinLabel = graph:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    tokenMinLabel:SetPoint("BOTTOMLEFT", graph, "BOTTOMLEFT", 6, 4)
+
+    tokenMaxLabel = graph:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    tokenMaxLabel:SetPoint("TOPLEFT", graph, "TOPLEFT", 6, -4)
+
+    tokenCurrentLabel = graph:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    tokenCurrentLabel:SetPoint("TOPRIGHT", panel, "TOPRIGHT", -6, -8)
+    tokenCurrentLabel:SetTextColor(0.2, 0.8, 0.5)
+    tokenCurrentLabel:SetJustifyH("RIGHT")
+
+    tokenGraph = graph
+
+    local statsFrame = CreateFrame("Frame", nil, panel)
+    statsFrame:SetPoint("TOP", graph, "BOTTOM", 0, -34)
+    statsFrame:SetSize(460, 30)
+
+    tokenStatsText = statsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    tokenStatsText:SetPoint("CENTER", statsFrame, "CENTER", 0, 0)
+    tokenStatsText:SetText("Loading statistics...")
+end
+
+local function TokenClearGraph()
+    for _, t in ipairs(tokenGraphBars) do t:Hide() end
+    for _, t in ipairs(tokenGraphPoints) do t:Hide() end
+    wipe(tokenGraphBars)
+    wipe(tokenGraphPoints)
+end
+
+-- Draws a thin line segment between two points using a rotated/stretched texture
+local function DrawLineSegment(graph, x1, y1, x2, y2, color, thickness)
+    thickness = thickness or 2
+    local dx, dy = x2 - x1, y2 - y1
+    local steps = math.floor(math.max(math.abs(dx), math.abs(dy)))
+    if steps < 1 then return end
+    local sx, sy = dx / steps, dy / steps
+    for i = 0, steps do
+        local seg = graph:CreateTexture(nil, "ARTWORK", nil, 2)
+        seg:SetTexture("Interface\\Buttons\\WHITE8X8")
+        seg:SetVertexColor(unpack(color))
+        seg:SetSize(thickness, thickness)
+        seg:SetPoint("CENTER", graph, "BOTTOMLEFT", x1 + sx * i, y1 + sy * i)
+        seg:Show()
+        table.insert(tokenGraphBars, seg)
+    end
+end
+
+-- Draws a vertical fill bar from baseline up to the line height (area-under-curve effect)
+function UI:RefreshToken()
+    if not tokenGraph then return end
+    local Token = WarbandAccountant.Token
+    local FormatGold = Token.FormatGold
+    local FormatTime = function(ts) return date("%m/%d %H:%M", ts) end
+
+    TokenClearGraph()
+
+    local fullData = Token:GetHistory()
+    if #fullData < 2 then
+        local msg = tokenGraph:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        msg:SetPoint("CENTER", tokenGraph, "CENTER")
+        msg:SetText("Not enough data yet...\nCheck back after a few price updates!")
+        table.insert(tokenGraphPoints, msg)
+        tokenStatsText:SetText("No historical data available")
+        return
+    end
+
+    -- Only graph the most recent 100 data points so the chart stays readable
+    local MAX_GRAPH_POINTS = 100
+    local data = fullData
+    if #fullData > MAX_GRAPH_POINTS then
+        data = {}
+        local startIdx = #fullData - MAX_GRAPH_POINTS + 1
+        for i = startIdx, #fullData do
+            table.insert(data, fullData[i])
+        end
+    end
+
+    local minPrice, maxPrice = math.huge, 0
+    for _, entry in ipairs(data) do
+        local gold = entry.price / 10000
+        if gold < minPrice then minPrice = gold end
+        if gold > maxPrice then maxPrice = gold end
+    end
+
+    local priceRange = maxPrice - minPrice
+    local padding = math.max(priceRange * 0.1, 5000)
+    local displayMin = math.max(0, minPrice - padding)
+    local displayMax = maxPrice + padding
+    if displayMax - displayMin < 20000 then
+        displayMax = displayMin + 20000
+    end
+
+    local current = data[#data]
+
+    tokenStatsText:SetText(string.format("High: %s%s|r | Low: %s%s|r | Points: %d",
+        "|cff00ff00", FormatGold(maxPrice * 10000),
+        "|cffff0000", FormatGold(minPrice * 10000),
+        #data))
+
+    tokenMinLabel:SetText("")
+    tokenMaxLabel:SetText("")
+    tokenCurrentLabel:SetText("Current: " .. FormatGold(current.price))
+
+    local graphWidth  = tokenGraph:GetWidth()
+    local graphHeight = tokenGraph:GetHeight()
+    local leftPadding, rightPadding, bottomPadding, topPadding = 72, 14, 30, 16
+    local drawWidth  = graphWidth  - leftPadding - rightPadding
+    local drawHeight = graphHeight - bottomPadding - topPadding
+
+    -- Gridlines + Y-axis price labels (5 lines: bottom to top)
+    for i = 0, 4 do
+        local gy = bottomPadding + (drawHeight * i / 4)
+        local priceAtLine = displayMin + (displayMax - displayMin) * (i / 4)
+
+        -- Gridline
+        local grid = tokenGraph:CreateTexture(nil, "BACKGROUND", nil, 1)
+        grid:SetTexture("Interface\\Buttons\\WHITE8X8")
+        grid:SetVertexColor(1, 1, 1, 0.15)
+        grid:SetSize(drawWidth, 1)
+        grid:SetPoint("BOTTOMLEFT", tokenGraph, "BOTTOMLEFT", leftPadding, gy)
+        table.insert(tokenGraphBars, grid)
+
+        -- Y-axis label (right-aligned against the left edge of the draw area)
+        local yLabel = tokenGraph:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        yLabel:SetPoint("RIGHT", tokenGraph, "BOTTOMLEFT", leftPadding - 4, gy)
+        yLabel:SetJustifyH("RIGHT")
+        yLabel:SetWidth(66)
+        -- Abbreviated format: show as "262.6k" style for readability
+        local g = priceAtLine
+        local labelTxt
+        if g >= 1000 then
+            labelTxt = string.format("%.1fk|cFFFFD700g|r", g / 1000)
+        else
+            labelTxt = string.format("%d|cFFFFD700g|r", math.floor(g))
+        end
+        yLabel:SetText(labelTxt)
+        yLabel:SetTextColor(0.65, 0.65, 0.65)
+        table.insert(tokenGraphBars, yLabel)
+    end
+
+    -- Determine sample points (cap at ~120 for perf/clarity, like a real line chart)
+    local maxPoints = math.min(#data, 120)
+    local step = math.max(1, math.floor(#data / maxPoints))
+    local sampled = {}
+    for i = 1, #data, step do
+        table.insert(sampled, data[i])
+    end
+    if sampled[#sampled] ~= data[#data] then
+        table.insert(sampled, data[#data])
+    end
+
+    local n = #sampled
+    local lineColor = {0.25, 0.85, 0.55}  -- teal-green, TSM-ish
+
+    -- Precompute screen coords for each sampled point
+    local coords = {}
+    for i, entry in ipairs(sampled) do
+        local px = leftPadding + (n > 1 and ((i - 1) / (n - 1)) * drawWidth or 0)
+        local normalized = (entry.price/10000 - displayMin) / (displayMax - displayMin)
+        normalized = math.max(0, math.min(1, normalized))
+        local py = bottomPadding + normalized * drawHeight
+        coords[i] = { x = px, y = py, entry = entry }
+    end
+
+    -- X-axis date labels: show ~5 evenly spaced timestamps along the bottom
+    local numDateLabels = math.min(n, 5)
+    for li = 1, numDateLabels do
+        local idx = math.max(1, math.floor((li - 1) / (numDateLabels - 1) * (n - 1)) + 1)
+        if numDateLabels == 1 then idx = 1 end
+        local c = coords[idx]
+        local ts = sampled[idx].timestamp
+        local dateStr = date("%m/%d %H:%M", ts)
+        local xLabel = tokenGraph:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        xLabel:SetPoint("TOP", tokenGraph, "BOTTOMLEFT", c.x, -(2))
+        xLabel:SetJustifyH("CENTER")
+        xLabel:SetText(dateStr)
+        xLabel:SetTextColor(0.65, 0.65, 0.65)
+        table.insert(tokenGraphBars, xLabel)
+
+        -- Subtle vertical tick mark at each date
+        local tick = tokenGraph:CreateTexture(nil, "BACKGROUND", nil, 1)
+        tick:SetTexture("Interface\\Buttons\\WHITE8X8")
+        tick:SetVertexColor(1, 1, 1, 0.10)
+        tick:SetSize(1, drawHeight + bottomPadding)
+        tick:SetPoint("BOTTOMLEFT", tokenGraph, "BOTTOMLEFT", c.x, 0)
+        table.insert(tokenGraphBars, tick)
+    end
+
+    -- Line: connect each consecutive pair of points
+    for i = 1, n - 1 do
+        DrawLineSegment(tokenGraph, coords[i].x, coords[i].y, coords[i+1].x, coords[i+1].y, lineColor, 2)
+    end
+
+    -- Square dot marker at every data point
+    for i, c in ipairs(coords) do
+        local isLast = (i == n)
+        local dot = tokenGraph:CreateTexture(nil, "OVERLAY")
+        dot:SetTexture("Interface\\Buttons\\WHITE8X8")
+        if isLast then
+            dot:SetVertexColor(lineColor[1], lineColor[2], lineColor[3], 1)
+            dot:SetSize(10, 10)
+        else
+            dot:SetVertexColor(lineColor[1], lineColor[2], lineColor[3], 0.85)
+            dot:SetSize(7, 7)
+        end
+        dot:SetPoint("CENTER", tokenGraph, "BOTTOMLEFT", c.x, c.y)
+        table.insert(tokenGraphBars, dot)
+    end
+
+    -- Invisible hover buttons for tooltips, one per sampled point
+    for i, c in ipairs(coords) do
+        local entry = c.entry
+        local isLast = (i == n)
+        local dotSize = (i == n) and 10 or 7
+        local btnW = math.max(dotSize + 4, drawWidth / n)
+        local btnH = dotSize + 8
+        local btn = CreateFrame("Button", nil, tokenGraph)
+        btn:SetSize(btnW, btnH)
+        btn:SetPoint("CENTER", tokenGraph, "BOTTOMLEFT", c.x, c.y)
+        btn:SetScript("OnEnter", function(self)
+            GameTooltip:SetOwner(tokenGraph, "ANCHOR_NONE")
+            GameTooltip:ClearAllPoints()
+            GameTooltip:SetPoint("BOTTOM", tokenGraph, "BOTTOMLEFT", c.x, c.y + 14)
+            GameTooltip:AddLine(FormatTime(entry.timestamp))
+            GameTooltip:AddLine(FormatGold(entry.price), 1, 0.82, 0)
+            if isLast then GameTooltip:AddLine("Current Price", 0, 1, 0) end
+            GameTooltip:Show()
+        end)
+        btn:SetScript("OnLeave", function() GameTooltip:Hide() end)
+        table.insert(tokenGraphPoints, btn)
+    end
+end
+
+-- ===============================================================================
+-- TOKEN HISTORY TAB (ledger-style list of all stored price entries)
+-- ===============================================================================
+local tokenHistScrollContent
+local tokenHistRows = {}
+local tokenHistStatsText
+
+local function BuildTokenHistoryTab(panel)
+    local col = { time=10, price=200, change=420 }
+    panel._col = col
+
+    tokenHistStatsText = panel:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    tokenHistStatsText:SetPoint("TOPLEFT", 10, -8)
+    tokenHistStatsText:SetWidth(CONTENT_W - 30)
+    tokenHistStatsText:SetJustifyH("LEFT")
+
+    local hdrY = -32
+    local function Hdr(txt, x)
+        local fs = panel:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        fs:SetPoint("TOPLEFT", x, hdrY)
+        fs:SetText(txt)
+        fs:SetTextColor(COLOR_GOLD.r, COLOR_GOLD.g, COLOR_GOLD.b)
+        return fs
+    end
+    Hdr("Time",   col.time)
+    Hdr("Price",  col.price)
+    Hdr("Change", col.change)
+
+    MakeSeparator(panel, hdrY - 14)
+    local sf, sc = CreateScrollArea(panel, 0, hdrY - 22, CONTENT_W, CONTENT_H - 60)
+    tokenHistScrollContent = sc
+end
+
+function UI:RefreshTokenHistory()
+    if not tokenHistScrollContent then return end
+    local Token = WarbandAccountant.Token
+    local FormatGold = Token.FormatGold
+    local FormatTime = function(ts) return date("%m/%d %H:%M", ts) end
+
+    for _, r in ipairs(tokenHistRows) do if r then r:Hide() end end
+    wipe(tokenHistRows)
+
+    local data = Token:GetHistory()
+    tokenHistStatsText:SetText(string.format("Total Entries: %d / 1008 (most recent first)", #data))
+
+    if #data == 0 then
+        local empty = tokenHistScrollContent:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+        empty:SetPoint("CENTER", 0, 0)
+        empty:SetText("No price history yet.")
+        tokenHistScrollContent:SetHeight(300)
+        return
+    end
+
+    local panel = mainFrame.panels.tokenhistory
+    local col = panel._col
+
+    -- Show most recent first
+    local yOff = 0
+    for i = #data, 1, -1 do
+        local entry = data[i]
+        local prevEntry = data[i - 1]
+        local rowIdx = #data - i + 1
+
+        local row = CreateFrame("Frame", nil, tokenHistScrollContent)
+        row:SetSize(CONTENT_W - 30, 24)
+        row:SetPoint("TOPLEFT", 0, yOff)
+
+        if rowIdx % 2 == 0 then
+            local bg = row:CreateTexture(nil, "BACKGROUND")
+            bg:SetAllPoints()
+            bg:SetColorTexture(0.15, 0.14, 0.10, 0.35)
+        end
+
+        local timeFs = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        timeFs:SetPoint("LEFT", col.time, 0)
+        timeFs:SetJustifyH("LEFT")
+        timeFs:SetText(FormatTime(entry.timestamp))
+        timeFs:SetTextColor(COLOR_GREY.r, COLOR_GREY.g, COLOR_GREY.b)
+
+        local priceFs = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        priceFs:SetPoint("LEFT", col.price, 0)
+        priceFs:SetJustifyH("LEFT")
+        priceFs:SetText(FormatGold(entry.price))
+
+        local changeFs = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        changeFs:SetPoint("LEFT", col.change, 0)
+        changeFs:SetJustifyH("LEFT")
+        if prevEntry then
+            local diff = entry.price - prevEntry.price
+            if diff > 0 then
+                changeFs:SetText("|cFF33FF33+" .. FormatGold(diff) .. "|r")
+            elseif diff < 0 then
+                changeFs:SetText("|cFFFF4444-" .. FormatGold(-diff) .. "|r")
+            else
+                changeFs:SetText("|cFF888888No change|r")
+            end
+        else
+            changeFs:SetText("|cFF888888--|r")
+        end
+
+        table.insert(tokenHistRows, row)
+        yOff = yOff - 24
+    end
+    tokenHistScrollContent:SetHeight(math.max(300, math.abs(yOff)))
 end
 
 -- ===============================================================================
@@ -1185,6 +1746,10 @@ local function CreateMainWindow()
         self:StopMovingOrSizing()
         local point, _, _, x, y = self:GetPoint(1)
         db.framePositions.main = { point=point, x=x, y=y }
+        -- Rotated textures flicker after a move; redraw the active tab if it's the graph
+        if activeTab == "token" then
+            C_Timer.After(0.05, function() UI:RefreshToken() end)
+        end
     end)
 
 
@@ -1217,7 +1782,9 @@ local function CreateMainWindow()
     -- Top nav buttons
     local btnOverview  = CreateNavButton(nav, "  Overview",  "overview",  -8)
     local btnTargets   = CreateNavButton(nav, "  Targets",   "targets",   nil, btnOverview)
-    local btnLedger    = CreateNavButton(nav, "  Ledger",    "ledger",    nil, btnTargets)
+    local btnLedger    = CreateNavButton(nav, "  Ledger",       "ledger",       nil, btnTargets)
+    local btnToken     = CreateNavButton(nav, "  Token Graph",  "token",        nil, btnLedger)
+    local btnTokenHist = CreateNavButton(nav, "  Token History","tokenhistory", nil, btnToken)
 
     -- Bottom nav buttons (anchored from the bottom up)
     local btnChangelog = CreateFrame("Button", nil, nav)
@@ -1291,16 +1858,20 @@ local function CreateMainWindow()
     end
 
     f.panels = {
-        overview  = MakePanel(),
-        targets   = MakePanel(),
-        ledger    = MakePanel(),
-        settings  = MakePanel(),
-        changelog = MakePanel(),
+        overview     = MakePanel(),
+        targets      = MakePanel(),
+        ledger       = MakePanel(),
+        token        = MakePanel(),
+        tokenhistory = MakePanel(),
+        settings     = MakePanel(),
+        changelog    = MakePanel(),
     }
 
     BuildOverviewTab(f.panels.overview)
     BuildTargetsTab(f.panels.targets)
     BuildLedgerTab(f.panels.ledger)
+    BuildTokenTab(f.panels.token)
+    BuildTokenHistoryTab(f.panels.tokenhistory)
     BuildSettingsTab(f.panels.settings)
     BuildChangelogTab(f.panels.changelog)
 
@@ -1323,22 +1894,27 @@ local function SetupTooltip(tooltip)
     local warbandGold = WarbandAccountant.Core:GetWarbandGold()
     tooltip:AddDoubleLine("Warband Bank:", WarbandAccountant.FormatGold(warbandGold), 0.8, 0.8, 0, 1, 1, 0)
 
+    -- Only show Token price in the tooltip if the floating Token frame is hidden,
+    -- since otherwise the price is already visible on screen at all times.
+    local Token = WarbandAccountant.Token
+    if Token then
+        local tokenSettings = Token:GetSettings()
+        if tokenSettings and tokenSettings.showFloatingFrame == false then
+            local tokenPrice = Token:GetCurrentPrice()
+            if tokenPrice then
+                tooltip:AddDoubleLine("WoW Token:", Token.FormatGold(tokenPrice), 0.8, 0.8, 0.8, 1, 1, 1)
+            end
+        end
+    end
+
     local totalGold = Data:GetTotalTrackedGold()
-    tooltip:AddDoubleLine("Total Gold:", WarbandAccountant.FormatGold(totalGold), 0.8, 0.8, 0.8, 1, 1, 1)
+    tooltip:AddDoubleLine("Gold in Bags:", WarbandAccountant.FormatGold(totalGold), 0.8, 0.8, 0.8, 1, 1, 1)
 
     local weekly = Data:GetWeeklyIncome()
     local wc = weekly >= 0
     tooltip:AddDoubleLine("This Week:",
         (wc and "|cFF33FF33+" or "|cFFFF4444") .. WarbandAccountant.FormatGold(weekly) .. "|r",
         0.8, 0.8, 0.8, 1, 1, 1)
-
-    local session = Data:GetTotalSessionChange()
-    if session ~= 0 then
-        local sc2 = session >= 0
-        tooltip:AddDoubleLine("Session:",
-            (sc2 and "|cFF33FF33+" or "|cFFFF4444") .. WarbandAccountant.FormatGold(session) .. "|r",
-            0.8, 0.8, 0.8, 1, 1, 1)
-    end
 
     tooltip:AddLine(" ")
     tooltip:AddLine("Click: Open Warband Accountant", 0.5, 0.5, 0.5)
@@ -1377,6 +1953,15 @@ function UI:Toggle(tabKey)
     else
         mainFrame:Show()
         UI:SwitchTab(tabKey or "overview")
+    end
+end
+
+function UI:OnTokenPriceUpdated()
+    if not mainFrame or not mainFrame:IsShown() then return end
+    if activeTab == "overview" then
+        UI:RefreshOverview()
+    elseif activeTab == "token" then
+        UI:RefreshToken()
     end
 end
 

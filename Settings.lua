@@ -63,6 +63,7 @@ SlashCmdList["WARBANDACCOUNTANT"] = function(msg)
         print("  /wba               - Toggle main window")
         print("  /wba targets       - Open Targets tab")
         print("  /wba ledger        - Open Ledger tab")
+        print("  /wba token         - Open Token History tab")
         print("  /wba settings      - Open Settings tab")
         print("  /wba changelog     - Open Changelog tab")
         print("  /wba process       - Force process transfers")
@@ -74,6 +75,8 @@ SlashCmdList["WARBANDACCOUNTANT"] = function(msg)
         WarbandAccountant.UI:Toggle("targets")
     elseif msg == "ledger" then
         WarbandAccountant.UI:Toggle("ledger")
+    elseif msg == "token" then
+        WarbandAccountant.UI:Toggle("token")
     elseif msg == "settings" or msg == "config" then
         WarbandAccountant.UI:Toggle("settings")
     elseif msg == "changelog" then

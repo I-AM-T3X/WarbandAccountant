@@ -12,9 +12,9 @@ function WarbandAccountant.FormatGold(copper)
     local prefix = negative and "-" or ""
     
     if gold > 0 then
-        return string.format("%s|cFFFFD700%dg|r |cFFC7C7C7%ds|r |cFFEDA55F%dc|r", prefix, gold, silver, remainingCopper)
+        return string.format("%s|cFFFFD700%dg|r |cFFC7C7C7%02ds|r |cFFEDA55F%02dc|r", prefix, gold, silver, remainingCopper)
     elseif silver > 0 then
-        return string.format("%s|cFFC7C7C7%ds|r |cFFEDA55F%dc|r", prefix, silver, remainingCopper)
+        return string.format("%s|cFFC7C7C7%ds|r |cFFEDA55F%02dc|r", prefix, silver, remainingCopper)
     else
         return string.format("%s|cFFEDA55F%dc|r", prefix, remainingCopper)
     end
@@ -214,7 +214,7 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
     if event == "PLAYER_LOGIN" then
         WarbandAccountant.Data:Init()
         WarbandAccountant.Settings:Init()
-        WarbandAccountant.UI:Init()
+        if WarbandAccountant.UI then WarbandAccountant.UI:Init() else print("|cFFFF0000Warband Accountant:|r UI failed to load.") end
         
         lastWarbandBalance = GetWarbandGold()
         
