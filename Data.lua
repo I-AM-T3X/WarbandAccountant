@@ -5,19 +5,7 @@ WarbandAccountant.Data = Data
 
 local DEFAULT_TARGET = 1000000
 local CURRENT_DB_VERSION = 1
-local CURRENT_ADDON_VERSION = "2.1.0"
-
--- Weekly reset day by region (1=Sunday, 2=Monday, 3=Tuesday, 4=Wednesday, 5=Thursday, 6=Friday, 7=Saturday)
--- WoW resets happen at specific times; we key off the weekday and treat the reset as midnight UTC that day.
-local REGION_RESET_DAYS = {
-    ["US"]  = 3, -- Tuesday
-    ["EU"]  = 4, -- Wednesday
-    ["KR"]  = 5, -- Thursday
-    ["TW"]  = 5, -- Thursday
-    ["CN"]  = 5, -- Thursday
-}
--- Default fallback if region unknown
-local DEFAULT_RESET_DAY = 3
+local CURRENT_ADDON_VERSION = "2.1.5"
 
 local db = nil
 
@@ -28,6 +16,8 @@ local function GetCharacterFullName()
 end
 
 function Data:Init()
+    local isBrandNewInstall = (WarbandAccountantDB == nil)
+
     if not WarbandAccountantDB then
         WarbandAccountantDB = {}
     end
@@ -40,6 +30,14 @@ function Data:Init()
     db.global.autoWithdraw = db.global.autoWithdraw ~= false
     db.global.confirmTransfers = db.global.confirmTransfers or false
     db.global.sortMode = db.global.sortMode or "arrow"
+    db.global.uiScalePercent = db.global.uiScalePercent or 100
+
+    -- Only true brand-new installs get the automatic first-run tutorial.
+    -- Anyone updating from an earlier version already has WarbandAccountantDB,
+    -- so they're marked as having seen it (they can still replay with /wba tutorial).
+    if db.global.tutorialSeen == nil then
+        db.global.tutorialSeen = not isBrandNewInstall
+    end
     
     db.global.totalDeposited = db.global.totalDeposited or 0
     db.global.totalWithdrawn = db.global.totalWithdrawn or 0
@@ -355,12 +353,73 @@ function Data:SetGuildBankData(guildName, goldAmount)
 end
 
 function Data:ClearGuildBankData(guildName)
-    if not db or not db.guildBankData then return end
+    if not db then return end
+    db.guildBankData = db.guildBankData or {}
     if guildName then
         db.guildBankData[guildName] = nil
+        if db.global and db.global.homeGuild == guildName then
+            db.global.homeGuild = nil
+        end
     else
         db.guildBankData = {}
+        if db.global then
+            db.global.homeGuild = nil
+        end
     end
+end
+
+-- The "home guild" is a user-chosen guild bank to always display on the
+-- Overview tab, regardless of which guild the current character is in.
+-- Falls back to the current character's own guild when unset (see
+-- Core:GetPersonalGuildBankGold).
+function Data:GetHomeGuild()
+    if not db or not db.global then return nil end
+    return db.global.homeGuild
+end
+
+function Data:SetHomeGuild(guildName)
+    if not db then return end
+    db.global = db.global or {}
+    db.global.homeGuild = guildName
+end
+
+-- Returns a sorted list of every guild name we have cached bank data for
+-- (i.e. every guild a character has synced as Guild Master at some point).
+function Data:GetKnownGuildNames()
+    if not db or not db.guildBankData then return {} end
+    local names = {}
+    for name, _ in pairs(db.guildBankData) do
+        table.insert(names, name)
+    end
+    table.sort(names)
+    return names
+end
+
+-- Returns { {name, gold, realm, lastUpdate}, ... } for every guild bank
+-- we've synced, sorted alphabetically by guild name.
+function Data:GetAllGuildBankData()
+    if not db or not db.guildBankData then return {} end
+    local list = {}
+    for name, data in pairs(db.guildBankData) do
+        table.insert(list, {
+            name       = name,
+            gold       = data.gold or 0,
+            realm      = data.realm,
+            lastUpdate = data.lastUpdate,
+        })
+    end
+    table.sort(list, function(a, b) return a.name < b.name end)
+    return list
+end
+
+-- Sum of gold across every synced guild bank, regardless of realm.
+function Data:GetTotalGuildBankGold()
+    if not db or not db.guildBankData then return 0 end
+    local total = 0
+    for _, data in pairs(db.guildBankData) do
+        total = total + (data.gold or 0)
+    end
+    return total
 end
 
 
@@ -374,6 +433,11 @@ end
 -- The most recent entry before the reset = balance at reset.
 -- The most recent entry overall = current balance.
 
+local WEEK_SECONDS = 604800
+
+-- Old fallback anchors, kept only in case C_DateAndTime.GetSecondsUntilWeeklyReset
+-- is ever unavailable (it's been in the API since patch 9.0.1 / 2020, so this
+-- should never actually trigger on a modern client).
 local KNOWN_RESET = {
     ["US"] = 1781618400,  -- Tue 2026-06-16 10:00 AM EDT
     ["EU"] = 1781604000,  -- Wed 2026-06-17 08:00 AM CEST
@@ -381,13 +445,26 @@ local KNOWN_RESET = {
     ["TW"] = 1781564400,
     ["CN"] = 1781564400,
 }
-local WEEK_SECONDS = 604800
 
 local function GetCurrentResetTimestamp()
+    -- Server-authoritative: correct for every region automatically, no
+    -- region-detection or hardcoded schedule needed. This replaced a
+    -- per-region anchor table that silently fell back to the US (Tuesday)
+    -- schedule whenever GetCurrentRegion() didn't resolve as expected --
+    -- notably wrong for China's separately-operated client.
+    if C_DateAndTime and C_DateAndTime.GetSecondsUntilWeeklyReset then
+        local now = GetServerTime and GetServerTime() or time()
+        local secondsUntilReset = C_DateAndTime.GetSecondsUntilWeeklyReset()
+        if secondsUntilReset and secondsUntilReset >= 0 then
+            return now + secondsUntilReset - WEEK_SECONDS
+        end
+    end
+
+    -- Fallback (see comment above)
     local region = GetCurrentRegion and GetCurrentRegion() or nil
     local names  = { [1]="US", [2]="KR", [3]="EU", [4]="TW", [5]="CN" }
     local anchor = KNOWN_RESET[names[region] or ""] or KNOWN_RESET["US"]
-    local now    = time()
+    local now    = GetServerTime and GetServerTime() or time()
     while anchor + WEEK_SECONDS <= now do anchor = anchor + WEEK_SECONDS end
     while anchor > now do anchor = anchor - WEEK_SECONDS end
     return anchor
@@ -448,6 +525,29 @@ function Data:SetLastSeenVersion(version)
     if db and db.global then
         db.global.lastSeenVersion = version
     end
+end
+
+function Data:HasSeenTutorial()
+    if not db or not db.global then return true end
+    return db.global.tutorialSeen == true
+end
+
+function Data:SetTutorialSeen(seen)
+    if not db then return end
+    db.global = db.global or {}
+    db.global.tutorialSeen = seen and true or false
+end
+
+-- Window scale, stored as a whole-number percent (50-300, step 10; 100 = default).
+function Data:GetUIScale()
+    if not db or not db.global then return 100 end
+    return db.global.uiScalePercent or 100
+end
+
+function Data:SetUIScale(percent)
+    if not db then return end
+    db.global = db.global or {}
+    db.global.uiScalePercent = percent
 end
 
 function Data:DeleteCharacter(charID)

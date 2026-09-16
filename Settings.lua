@@ -66,8 +66,11 @@ SlashCmdList["WARBANDACCOUNTANT"] = function(msg)
         print("  /wba token         - Open Token History tab")
         print("  /wba settings      - Open Settings tab")
         print("  /wba changelog     - Open Changelog tab")
+        print("  /wba support       - Open Support tab (Discord/GitHub)")
+        print("  /wba tutorial      - Replay the first-run tutorial")
         print("  /wba process       - Force process transfers")
         print("  /wba weekly        - Debug weekly income info")
+        print("  /wba debuginfo     - Show region/realm/time diagnostics (for bug reports)")
         print("  /wba delete <name> - Delete a character")
         print("  /wba resetgm       - Reset Guild Master cache")
         print("  /wba clearguild    - Clear guild bank data")
@@ -81,6 +84,10 @@ SlashCmdList["WARBANDACCOUNTANT"] = function(msg)
         WarbandAccountant.UI:Toggle("settings")
     elseif msg == "changelog" then
         WarbandAccountant.UI:Toggle("changelog")
+    elseif msg == "support" then
+        WarbandAccountant.UI:Toggle("support")
+    elseif msg == "tutorial" then
+        WarbandAccountant.UI:StartTutorial()
     elseif msg == "toggle" then
         WarbandAccountant.UI:Toggle("overview")
     elseif msg == "process" then
@@ -89,16 +96,93 @@ SlashCmdList["WARBANDACCOUNTANT"] = function(msg)
         local Data = WarbandAccountant.Data
         local income  = Data:GetWeeklyIncome()
         local resetTS = Data:GetWeeklyResetTimestamp()
-        local now     = time()
+        local now     = GetServerTime and GetServerTime() or time()
         print("|cFFFFD700WarbandAccountant Weekly:|r")
         print("  Reset: " .. date("!%Y-%m-%d %H:%M:%S", resetTS) .. " UTC (" .. tostring(math.floor((now - resetTS) / 3600)) .. "h ago)")
         print("  Weekly Income: " .. WarbandAccountant.FormatGold(income))
+    elseif msg == "debuginfo" then
+        local Data = WarbandAccountant.Data
+        local region = GetCurrentRegion and GetCurrentRegion() or nil
+        local regionNames = { [1]="US", [2]="KR", [3]="EU", [4]="TW", [5]="CN" }
+        local locale = GetLocale and GetLocale() or "?"
+        local realm = GetRealmName and GetRealmName() or "?"
+        local buildVersion, buildNumber, buildDate = "?", "?", "?"
+        if GetBuildInfo then
+            buildVersion, buildNumber, buildDate = GetBuildInfo()
+        end
+        local serverTime = GetServerTime and GetServerTime() or nil
+        local localTime = time()
+        local secondsUntilReset = (C_DateAndTime and C_DateAndTime.GetSecondsUntilWeeklyReset)
+            and C_DateAndTime.GetSecondsUntilWeeklyReset() or nil
+        local resetTS = Data:GetWeeklyResetTimestamp()
+
+        print("|cFF00FF00Warband Accountant Debug Info:|r")
+        print("  Addon Version: " .. Data:GetCurrentAddonVersion())
+        print("  Region: " .. (regionNames[region] or "unknown") .. " (raw=" .. tostring(region) .. ")")
+        print("  Locale: " .. locale)
+        print("  Realm: " .. realm)
+        print("  Client Build: " .. tostring(buildVersion) .. " (" .. tostring(buildNumber) .. "), " .. tostring(buildDate))
+        print("  Server Time: " .. tostring(serverTime) .. (serverTime and (" (" .. date("!%Y-%m-%d %H:%M:%S", serverTime) .. " UTC)") or " (unavailable)"))
+        print("  Local Clock Time: " .. tostring(localTime) .. " (" .. date("!%Y-%m-%d %H:%M:%S", localTime) .. " UTC)")
+        if serverTime then
+            print("  Clock Skew (local - server): " .. tostring(localTime - serverTime) .. "s")
+        end
+        print("  Seconds Until Weekly Reset (raw API): " .. tostring(secondsUntilReset))
+        print("  Calculated Last Reset: " .. date("!%Y-%m-%d %H:%M:%S", resetTS) .. " UTC")
+        print("  Weekly Income (calculated): " .. WarbandAccountant.FormatGold(Data:GetWeeklyIncome()))
+        print("|cFFFFFF00Tip:|r Copy/paste this block when reporting a bug on GitHub.")
     elseif msg == "resetgm" then
         WarbandAccountant.Data:ResetGuildMasterCache()
         print("|cFF00FF00Warband Accountant:|r Guild Master cache cleared.")
     elseif msg == "clearguild" then
         WarbandAccountant.Data:ClearGuildBankData()
+        if WarbandAccountant.UI.UpdateGuildNavVisibility then
+            WarbandAccountant.UI:UpdateGuildNavVisibility()
+        end
         print("|cFF00FF00Warband Accountant:|r Guild bank data cleared.")
+    elseif msg == "debugguild" or msg:match("^debugguild%s+%d+$") then
+        local Data = WarbandAccountant.Data
+        local countArg = msg:match("^debugguild%s+(%d+)$")
+        local count = math.max(1, math.min(tonumber(countArg) or 2, 10))
+
+        for i = 1, count do
+            local goldAmount = math.random(1000, 999999) * 10000
+            Data:SetGuildBankData("Debug Guild " .. i, goldAmount)
+        end
+
+        if WarbandAccountant.UI.UpdateGuildNavVisibility then
+            WarbandAccountant.UI:UpdateGuildNavVisibility()
+        end
+        if WarbandAccountant.UI.RefreshGuilds then
+            WarbandAccountant.UI:RefreshGuilds()
+        end
+
+        print(string.format("|cFF00FF00Warband Accountant:|r Added %d debug guild bank %s (\"Debug Guild 1\"..\"Debug Guild %d\").",
+            count, count == 1 and "entry" or "entries", count))
+        print("|cFFFFFF00Warband Accountant:|r Use /wba cleardebugguild to remove just these, or /wba clearguild to wipe all guild data (real and fake).")
+    elseif msg == "cleardebugguild" then
+        local Data = WarbandAccountant.Data
+        local removed = 0
+        for _, name in ipairs(Data:GetKnownGuildNames()) do
+            if name:match("^Debug Guild %d+$") then
+                Data:ClearGuildBankData(name)
+                removed = removed + 1
+            end
+        end
+
+        if WarbandAccountant.UI.UpdateGuildNavVisibility then
+            WarbandAccountant.UI:UpdateGuildNavVisibility()
+        end
+        if WarbandAccountant.UI.RefreshGuilds then
+            WarbandAccountant.UI:RefreshGuilds()
+        end
+
+        if removed > 0 then
+            print(string.format("|cFF00FF00Warband Accountant:|r Removed %d debug guild bank %s. Real synced guild data untouched.",
+                removed, removed == 1 and "entry" or "entries"))
+        else
+            print("|cFF00FF00Warband Accountant:|r No debug guild banks found.")
+        end
     elseif msg:match("^delete ") then
         local charName = msg:match("^delete (.+)$")
         if charName then

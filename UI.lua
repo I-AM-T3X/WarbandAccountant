@@ -130,6 +130,8 @@ function UI:SwitchTab(tabKey)
         UI:RefreshTokenHistory()
     elseif tabKey == "changelog" then
         UI:RefreshChangelog()
+    elseif tabKey == "guilds" then
+        UI:RefreshGuilds()
     end
 end
 
@@ -860,10 +862,18 @@ local function BuildSettingsTab(outerPanel)
     end
 
     local settings = Data:GetSettings()
-    local halfW = math.floor(cw / 2) - 15
+    -- Two equal columns whose combined span exactly matches the full-width
+    -- sections below (10 .. cw-10), rather than eyeballing a gap and letting
+    -- rounding push the right column's right edge past the others.
+    local colGap = 15
+    local totalW = cw - 20
+    local halfW  = math.floor((totalW - colGap) / 2)
+    local dispX  = 10 + halfW + colGap
+    local dispW  = totalW - halfW - colGap
 
     -- -- Automation box ------------------------------------------------------
-    local autoBox = Section("Automation", 10, y, halfW, 130)
+    local autoDispBoxH = 160
+    local autoBox = Section("Automation", 10, y, halfW, autoDispBoxH)
 
     MakeCB(autoBox, "Auto-deposit excess gold to Warband Bank", 10, -28,
         function() return settings.autoDeposit ~= false end,
@@ -876,7 +886,7 @@ local function BuildSettingsTab(outerPanel)
         function(v) settings.confirmTransfers = v end)
 
     -- -- Display box ---------------------------------------------------------
-    local dispBox = Section("Display", halfW + 25, y, halfW, 130)
+    local dispBox = Section("Display", dispX, y, dispW, autoDispBoxH)
 
     -- Sort Mode row
     local sortLbl = dispBox:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
@@ -939,8 +949,35 @@ local function BuildSettingsTab(outerPanel)
         UIDropDownMenu_AddButton(info)
     end)
 
+    -- UI Scale row
+    local scaleLbl = dispBox:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    scaleLbl:SetPoint("TOPLEFT", 12, -122)
+    scaleLbl:SetText("UI Scale:")
+    scaleLbl:SetTextColor(COLOR_GREY.r, COLOR_GREY.g, COLOR_GREY.b)
+
+    local scaleDD = CreateFrame("Frame", "WBAScaleDD", dispBox, "UIDropDownMenuTemplate")
+    scaleDD:SetPoint("LEFT", scaleLbl, "RIGHT", 4, 0)
+    UIDropDownMenu_SetWidth(scaleDD, 90)
+    UIDropDownMenu_SetText(scaleDD, Data:GetUIScale() .. "%")
+    UIDropDownMenu_Initialize(scaleDD, function()
+        for pct = 50, 300, 10 do
+            local info = UIDropDownMenu_CreateInfo()
+            info.text = pct .. "%"
+            info.arg1 = pct
+            info.checked = (Data:GetUIScale() == pct)
+            info.func = function(btn, arg1)
+                Data:SetUIScale(arg1)
+                UIDropDownMenu_SetText(scaleDD, arg1 .. "%")
+                if mainFrame then
+                    mainFrame:SetScale(arg1 / 100)
+                end
+            end
+            UIDropDownMenu_AddButton(info)
+        end
+    end)
+
     -- -- Category Names + Default Targets ------------------------------------
-    local tgtY   = y - 130
+    local tgtY   = y - autoDispBoxH
     local colW   = math.floor((cw - 40) / 2)
     local rowH   = 28
     local numRows = 3
@@ -1037,10 +1074,61 @@ local function BuildSettingsTab(outerPanel)
     noteFs:SetTextColor(COLOR_GREY.r, COLOR_GREY.g, COLOR_GREY.b)
     noteFs:SetWidth(cw - 40)
 
+    -- -- Guild Bank section -----------------------------------------------------
+    local guildY   = tgtY - tgtBoxH - 12
+    local guildBoxH = 74
+    local guildBox = Section("Guild Bank", 10, guildY, cw - 20, guildBoxH)
+
+    local homeLbl = guildBox:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    homeLbl:SetPoint("TOPLEFT", 12, -30)
+    homeLbl:SetText("Track Guild Bank For:")
+    homeLbl:SetTextColor(COLOR_GREY.r, COLOR_GREY.g, COLOR_GREY.b)
+
+    local homeDD = CreateFrame("Frame", "WBAHomeGuildDD", guildBox, "UIDropDownMenuTemplate")
+    homeDD:SetPoint("LEFT", homeLbl, "RIGHT", 0, -2)
+    UIDropDownMenu_SetWidth(homeDD, 190)
+
+    local function HomeGuildDisplayText()
+        return Data:GetHomeGuild() or "Current Character's Guild"
+    end
+    UIDropDownMenu_SetText(homeDD, HomeGuildDisplayText())
+
+    UIDropDownMenu_Initialize(homeDD, function()
+        local info = UIDropDownMenu_CreateInfo()
+        info.text = "Current Character's Guild"
+        info.checked = (Data:GetHomeGuild() == nil)
+        info.func = function(btn)
+            Data:SetHomeGuild(nil)
+            UIDropDownMenu_SetText(homeDD, "Current Character's Guild")
+            if activeTab == "overview" then UI:RefreshOverview() end
+        end
+        UIDropDownMenu_AddButton(info)
+
+        for _, name in ipairs(Data:GetKnownGuildNames()) do
+            info = UIDropDownMenu_CreateInfo()
+            info.text = name
+            info.arg1 = name
+            info.checked = (Data:GetHomeGuild() == name)
+            info.func = function(btn, arg1)
+                Data:SetHomeGuild(arg1)
+                UIDropDownMenu_SetText(homeDD, arg1)
+                if activeTab == "overview" then UI:RefreshOverview() end
+            end
+            UIDropDownMenu_AddButton(info)
+        end
+    end)
+
+    local homeDesc = guildBox:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    homeDesc:SetPoint("TOPLEFT", 12, -56)
+    homeDesc:SetWidth(cw - 40)
+    homeDesc:SetJustifyH("LEFT")
+    homeDesc:SetText("Only guilds a GM character has synced show up here. Alts elsewhere will display this guild's bank instead of their own.")
+    homeDesc:SetTextColor(COLOR_GREY.r, COLOR_GREY.g, COLOR_GREY.b)
+
     -- -- Token Price section ---------------------------------------------------
     local Token = WarbandAccountant.Token
     local tokenSettings = Token and Token:GetSettings()
-    local tokenY = tgtY - tgtBoxH - 12
+    local tokenY = guildY - guildBoxH - 12
     local tokenBoxH = 188
     local tokenBox = Section("Token Price", 10, tokenY, cw - 20, tokenBoxH)
 
@@ -1722,6 +1810,273 @@ function UI:RefreshChangelog()
 end
 
 -- ===============================================================================
+-- GUILDS TAB (only shown when 2+ guild banks are being tracked)
+-- ===============================================================================
+local guildsTotalCard
+local guildsScroll, guildsContent
+
+local function BuildGuildsTab(panel)
+    local titleFs = panel:CreateFontString(nil, "OVERLAY", "GameFontNormalHuge")
+    titleFs:SetPoint("TOPLEFT", 6, -6)
+    titleFs:SetText("Guild Banks")
+    titleFs:SetTextColor(COLOR_GOLD.r, COLOR_GOLD.g, COLOR_GOLD.b)
+
+    local subFs = panel:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    subFs:SetPoint("TOPLEFT", titleFs, "BOTTOMLEFT", 0, -4)
+    subFs:SetText("Every guild bank a character on this account has synced as Guild Master.")
+    subFs:SetTextColor(COLOR_GREY.r, COLOR_GREY.g, COLOR_GREY.b)
+
+    guildsTotalCard = CreateStatCard(panel, "Total Across All Guilds", 6, -56, 260, 85)
+
+    local col = { name = 10, gold = 270, realm = 450, updated = 610 }
+    local hdrY = -156
+
+    local function Hdr(txt, x)
+        local fs = panel:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        fs:SetPoint("TOPLEFT", panel, "TOPLEFT", x, hdrY)
+        fs:SetText(txt)
+        fs:SetTextColor(COLOR_GOLD.r, COLOR_GOLD.g, COLOR_GOLD.b)
+        return fs
+    end
+    Hdr("Guild",       col.name)
+    Hdr("Gold",        col.gold)
+    Hdr("Realm",       col.realm)
+    Hdr("Last Synced", col.updated)
+
+    MakeSeparator(panel, hdrY - 16)
+
+    local scrollH = CONTENT_H - 156 - 40
+    guildsScroll, guildsContent = CreateScrollArea(panel, 0, hdrY - 24, CONTENT_W, scrollH)
+    panel._guildsCol = col
+end
+
+function UI:RefreshGuilds()
+    if not mainFrame or not mainFrame.panels.guilds then return end
+    local Data = WarbandAccountant.Data
+
+    local total = Data:GetTotalGuildBankGold()
+    guildsTotalCard.value:SetText(WarbandAccountant.FormatGold(total))
+    guildsTotalCard.value:SetTextColor(COLOR_GOLD.r, COLOR_GOLD.g, COLOR_GOLD.b)
+
+    local col = mainFrame.panels.guilds._guildsCol
+    if guildsContent._rows then
+        for _, r in ipairs(guildsContent._rows) do r:Hide() end
+    end
+    guildsContent._rows = {}
+
+    local guilds     = Data:GetAllGuildBankData()
+    local homeGuild  = Data:GetHomeGuild()
+
+    if homeGuild then
+        table.sort(guilds, function(a, b)
+            if a.name == homeGuild and b.name ~= homeGuild then return true end
+            if b.name == homeGuild and a.name ~= homeGuild then return false end
+            return a.name < b.name
+        end)
+    end
+
+    local yOff = 0
+    for i, g in ipairs(guilds) do
+        local row = CreateFrame("Frame", nil, guildsContent)
+        row:SetSize(CONTENT_W - 30, ROW_H)
+        row:SetPoint("TOPLEFT", 0, yOff)
+
+        if i % 2 == 0 then
+            local bg = row:CreateTexture(nil, "BACKGROUND")
+            bg:SetAllPoints()
+            bg:SetColorTexture(0.15, 0.14, 0.10, 0.4)
+        end
+
+        local isHome = (g.name == homeGuild)
+        local nameStr = g.name .. (isHome and "  |cFF00FF00(Home)|r" or "")
+        local nameClr = isHome and COLOR_GOLD or COLOR_WHITE
+
+        local nameFs = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        nameFs:SetPoint("LEFT", col.name, 0)
+        nameFs:SetWidth(250)
+        nameFs:SetJustifyH("LEFT")
+        nameFs:SetText(nameStr)
+        nameFs:SetTextColor(nameClr.r, nameClr.g, nameClr.b)
+
+        local goldFs = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        goldFs:SetPoint("LEFT", col.gold, 0)
+        goldFs:SetWidth(170)
+        goldFs:SetJustifyH("LEFT")
+        goldFs:SetText(WarbandAccountant.FormatGold(g.gold))
+
+        local realmFs = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        realmFs:SetPoint("LEFT", col.realm, 0)
+        realmFs:SetWidth(150)
+        realmFs:SetJustifyH("LEFT")
+        realmFs:SetText(g.realm or "?")
+        realmFs:SetTextColor(COLOR_GREY.r, COLOR_GREY.g, COLOR_GREY.b)
+
+        local updFs = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        updFs:SetPoint("LEFT", col.updated, 0)
+        updFs:SetWidth(140)
+        updFs:SetJustifyH("LEFT")
+        updFs:SetText(g.lastUpdate and FormatTimestamp(g.lastUpdate) or "--")
+        updFs:SetTextColor(COLOR_GREY.r, COLOR_GREY.g, COLOR_GREY.b)
+
+        table.insert(guildsContent._rows, row)
+        yOff = yOff - ROW_H
+    end
+    guildsContent:SetHeight(math.max(300, math.abs(yOff)))
+end
+
+-- Shows/hides the "Guilds" nav entry based on how many guild banks are
+-- currently tracked. Only worth its own tab once there's more than one
+-- to compare -- a single guild is already visible on the Overview tab.
+function UI:UpdateGuildNavVisibility()
+    if not mainFrame or not navButtons.guilds then return end
+    local count = #WarbandAccountant.Data:GetKnownGuildNames()
+    if count >= 2 then
+        navButtons.guilds:Show()
+    else
+        navButtons.guilds:Hide()
+        if activeTab == "guilds" then
+            UI:SwitchTab("overview")
+        end
+    end
+end
+
+-- ===============================================================================
+-- SUPPORT TAB
+-- ===============================================================================
+local function BuildSupportTab(panel)
+    local titleFs = panel:CreateFontString(nil, "OVERLAY", "GameFontNormalHuge")
+    titleFs:SetPoint("TOPLEFT", 6, -6)
+    titleFs:SetText("Support & Feedback")
+    titleFs:SetTextColor(COLOR_GOLD.r, COLOR_GOLD.g, COLOR_GOLD.b)
+
+    local subFs = panel:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    subFs:SetPoint("TOPLEFT", titleFs, "BOTTOMLEFT", 0, -4)
+    subFs:SetText("Questions, bugs, or feature ideas -- reach out through either of these.")
+    subFs:SetTextColor(COLOR_GREY.r, COLOR_GREY.g, COLOR_GREY.b)
+
+    local textX = 300 -- fixed so both rows' description/URL line up regardless of logo width
+
+    local function LinkRow(desc, url, yOff, iconTexture, iconWidth, iconHeight)
+        local box = CreateFrame("Frame", nil, panel, "BackdropTemplate")
+        box:SetSize(CONTENT_W - 20, 78)
+        box:SetPoint("TOPLEFT", 6, yOff)
+        box:SetBackdrop({
+            bgFile   = "Interface\\DialogFrame\\UI-DialogBox-Background-Dark",
+            edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+            tile=true, tileSize=16, edgeSize=12,
+            insets={ left=3, right=3, top=3, bottom=3 }
+        })
+        box:SetBackdropColor(0.06, 0.05, 0.03, 0.95)
+        box:SetBackdropBorderColor(0.35, 0.30, 0.15, 0.7)
+
+        local icon = box:CreateTexture(nil, "ARTWORK")
+        icon:SetSize(iconWidth, iconHeight)
+        icon:SetPoint("LEFT", 20, 0)
+        icon:SetTexture(iconTexture)
+
+        local descFs = box:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        descFs:SetPoint("TOPLEFT", textX, -12)
+        descFs:SetWidth(CONTENT_W - 40 - textX)
+        descFs:SetJustifyH("LEFT")
+        descFs:SetText(desc)
+        descFs:SetTextColor(COLOR_GREY.r, COLOR_GREY.g, COLOR_GREY.b)
+
+        local eb = CreateFrame("EditBox", nil, box, "InputBoxTemplate")
+        eb:SetSize(CONTENT_W - 60 - textX - 130, 22)
+        eb:SetPoint("TOPLEFT", textX + 4, -50)
+        eb:SetAutoFocus(false)
+        eb:SetText(url)
+        eb:SetCursorPosition(0)
+        eb:SetScript("OnEditFocusGained", function(self) self:HighlightText() end)
+        eb:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
+        eb:SetScript("OnEnterPressed", function(self) self:ClearFocus() end)
+        eb:SetScript("OnMouseUp", function(self) self:HighlightText() end)
+        eb:SetScript("OnTextChanged", function(self, isUserInput)
+            -- isUserInput is only true for real typing/pasting/deleting, not
+            -- for the SetText call below, so this can't loop -- it just snaps
+            -- straight back to the real URL the instant someone edits it.
+            if isUserInput then
+                self:SetText(url)
+                self:SetCursorPosition(0)
+                self:HighlightText()
+            end
+        end)
+
+        local hint = box:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+        hint:SetPoint("LEFT", eb, "RIGHT", 8, 0)
+        hint:SetText("Click, then Ctrl+C")
+
+        return box
+    end
+
+    LinkRow("Join the community, ask questions, get help.",
+        "https://discord.gg/TDtKmmKGbU", -46,
+        "Interface\\AddOns\\WarbandAccountant\\Textures\\discord", 265, 40)
+    LinkRow("Report a bug or request a feature.",
+        "https://github.com/I-AM-T3X/WarbandAccountant/issues", -136,
+        "Interface\\AddOns\\WarbandAccountant\\Textures\\github", 175, 40)
+
+    -- -- Supporters -------------------------------------------------------------
+    local supHeaderFs = panel:CreateFontString(nil, "OVERLAY", "GameFontNormalHuge")
+    supHeaderFs:SetPoint("TOPLEFT", 6, -230)
+    supHeaderFs:SetText("Supporters")
+    supHeaderFs:SetTextColor(COLOR_GOLD.r, COLOR_GOLD.g, COLOR_GOLD.b)
+
+    local supDescFs = panel:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    supDescFs:SetPoint("TOPLEFT", supHeaderFs, "BOTTOMLEFT", 0, -4)
+    supDescFs:SetText("Thank you to everyone who supports this project!")
+    supDescFs:SetTextColor(COLOR_GREY.r, COLOR_GREY.g, COLOR_GREY.b)
+
+    local supBoxY = -270
+    local supBoxW = CONTENT_W - 20
+    local supBoxH = CONTENT_H - math.abs(supBoxY) - 10 -- fill the rest of the panel
+    local supBox = CreateFrame("Frame", nil, panel, "BackdropTemplate")
+    supBox:SetSize(supBoxW, supBoxH)
+    supBox:SetPoint("TOPLEFT", 6, supBoxY)
+    supBox:SetBackdrop({
+        bgFile   = "Interface\\DialogFrame\\UI-DialogBox-Background-Dark",
+        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+        tile=true, tileSize=16, edgeSize=12,
+        insets={ left=3, right=3, top=3, bottom=3 }
+    })
+    supBox:SetBackdropColor(0.06, 0.05, 0.03, 0.95)
+    supBox:SetBackdropBorderColor(0.35, 0.30, 0.15, 0.7)
+
+    local supporters = WarbandAccountant.Supporters or {}
+
+    if #supporters == 0 then
+        local emptyFs = supBox:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        emptyFs:SetPoint("TOPLEFT", 12, -12)
+        emptyFs:SetText("No supporters yet -- be the first!")
+        emptyFs:SetTextColor(COLOR_GREY.r, COLOR_GREY.g, COLOR_GREY.b)
+    else
+        local names = {}
+        for _, n in ipairs(supporters) do table.insert(names, n) end
+        table.sort(names, function(a, b) return a:lower() < b:lower() end)
+
+        local sSf, sSc = CreateScrollArea(supBox, 6, -8, supBoxW - 12, supBoxH - 16)
+
+        local COLS = 5
+        local rowH = 22
+        local colW = math.floor((supBoxW - 12 - 24) / COLS)
+
+        for i, name in ipairs(names) do
+            local col = (i - 1) % COLS
+            local row = math.floor((i - 1) / COLS)
+            local nameFs = sSc:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+            nameFs:SetPoint("TOPLEFT", col * colW + 4, -(row * rowH) - 4)
+            nameFs:SetWidth(colW - 8)
+            nameFs:SetJustifyH("LEFT")
+            nameFs:SetText(name)
+            nameFs:SetTextColor(COLOR_WHITE.r, COLOR_WHITE.g, COLOR_WHITE.b)
+        end
+
+        local numRows = math.ceil(#names / COLS)
+        sSc:SetHeight(math.max(supBoxH - 16, numRows * rowH + 8))
+    end
+end
+
+-- ===============================================================================
 -- MAIN WINDOW
 -- ===============================================================================
 local function CreateMainWindow()
@@ -1730,6 +2085,7 @@ local function CreateMainWindow()
 
     local Data = WarbandAccountant.Data
     local db   = Data:GetDB()
+    f:SetScale((Data:GetUIScale() or 100) / 100)
     db.framePositions = db.framePositions or {}
     if db.framePositions.main and db.framePositions.main.point then
         f:SetPoint(db.framePositions.main.point, db.framePositions.main.x, db.framePositions.main.y)
@@ -1785,11 +2141,16 @@ local function CreateMainWindow()
     local btnLedger    = CreateNavButton(nav, "  Ledger",       "ledger",       nil, btnTargets)
     local btnToken     = CreateNavButton(nav, "  Token Graph",  "token",        nil, btnLedger)
     local btnTokenHist = CreateNavButton(nav, "  Token History","tokenhistory", nil, btnToken)
+    local btnGuilds    = CreateNavButton(nav, "  Guild Banks", "guilds",       nil, btnTokenHist)
 
     -- Bottom nav buttons (anchored from the bottom up)
+    local btnSupport = CreateFrame("Button", nil, nav)
+    btnSupport:SetSize(NAV_W, NAV_BTN_H)
+    btnSupport:SetPoint("BOTTOMLEFT", nav, "BOTTOMLEFT", 0, 4)
+
     local btnChangelog = CreateFrame("Button", nil, nav)
     btnChangelog:SetSize(NAV_W, NAV_BTN_H)
-    btnChangelog:SetPoint("BOTTOMLEFT", nav, "BOTTOMLEFT", 0, 4)
+    btnChangelog:SetPoint("BOTTOM", btnSupport, "TOP", 0, 0)
 
     local btnSettings  = CreateFrame("Button", nil, nav)
     btnSettings:SetSize(NAV_W, NAV_BTN_H)
@@ -1847,6 +2208,7 @@ local function CreateMainWindow()
 
     StyleBottomBtn(btnSettings,  "  Settings",  "settings")
     StyleBottomBtn(btnChangelog, "  Changelog", "changelog")
+    StyleBottomBtn(btnSupport,   "  Support",   "support")
 
     -- -- Content panels -------------------------------------------------------
     local function MakePanel()
@@ -1863,8 +2225,10 @@ local function CreateMainWindow()
         ledger       = MakePanel(),
         token        = MakePanel(),
         tokenhistory = MakePanel(),
+        guilds       = MakePanel(),
         settings     = MakePanel(),
         changelog    = MakePanel(),
+        support      = MakePanel(),
     }
 
     BuildOverviewTab(f.panels.overview)
@@ -1872,10 +2236,20 @@ local function CreateMainWindow()
     BuildLedgerTab(f.panels.ledger)
     BuildTokenTab(f.panels.token)
     BuildTokenHistoryTab(f.panels.tokenhistory)
+    BuildGuildsTab(f.panels.guilds)
     BuildSettingsTab(f.panels.settings)
     BuildChangelogTab(f.panels.changelog)
+    BuildSupportTab(f.panels.support)
 
     mainFrame = f
+
+    f:HookScript("OnHide", function()
+        if UI.HideTutorialTips then
+            UI:HideTutorialTips()
+        end
+    end)
+
+    UI:UpdateGuildNavVisibility()
 
     -- Default to overview
     UI:SwitchTab("overview")
@@ -1947,13 +2321,54 @@ function UI:Init()
 end
 
 function UI:Toggle(tabKey)
-    if not mainFrame then CreateMainWindow() end
-    if mainFrame:IsShown() and activeTab == (tabKey or "overview") then
+    local justCreated = false
+    if not mainFrame then
+        CreateMainWindow()
+        justCreated = true
+    end
+    -- A brand-new window always ends up shown -- CreateMainWindow() leaves
+    -- it visible and already on "overview", which would otherwise look
+    -- identical to "already open on the requested tab" below and get
+    -- immediately hidden again on this same call (the bug: minimap button
+    -- doing nothing on the very first click, only working on the second).
+    if not justCreated and mainFrame:IsShown() and activeTab == (tabKey or "overview") then
         mainFrame:Hide()
     else
         mainFrame:Show()
         UI:SwitchTab(tabKey or "overview")
     end
+end
+
+-- -- Public accessors for other modules (e.g. Tutorial.lua) ------------------
+-- Kept deliberately narrow: mainFrame/navButtons/activeTab stay private to
+-- this file, other modules go through these instead of reaching in directly.
+
+-- Ensures the main window exists and is visible. Does not change tabs.
+function UI:EnsureWindowOpen()
+    if not mainFrame then CreateMainWindow() end
+    if not mainFrame:IsShown() then
+        mainFrame:Show()
+    end
+end
+
+-- Returns the main window frame, creating it first if needed. Useful as a
+-- HelpTip/tooltip parent.
+function UI:GetMainFrame()
+    if not mainFrame then CreateMainWindow() end
+    return mainFrame
+end
+
+-- Returns the nav button frame for a tab key, or nil if that tab doesn't
+-- exist yet (window never opened) or is currently hidden (e.g. Guild Banks
+-- before 2+ guilds are synced).
+function UI:GetNavButtonFrame(tabKey)
+    local btn = navButtons[tabKey]
+    if not btn or not btn:IsShown() then return nil end
+    return btn
+end
+
+function UI:GetActiveTab()
+    return activeTab
 end
 
 function UI:OnTokenPriceUpdated()
@@ -2010,9 +2425,13 @@ function UI:CheckAndShowUpdateNotification()
     local current  = Data:GetCurrentAddonVersion()
     if lastSeen ~= current then
         Data:SetLastSeenVersion(current)
-        C_Timer.After(0.5, function()
-            UI:Toggle("changelog")
-        end)
+        -- Brand-new installs (never-before-seen sentinel) get the tutorial
+        -- instead of a changelog popup for a version they never used.
+        if lastSeen ~= "0.0.0" then
+            C_Timer.After(0.5, function()
+                UI:Toggle("changelog")
+            end)
+        end
     end
 end
 

@@ -20,6 +20,11 @@ local ADDON_NAME, WarbandAccountant = ...
 
 -- Ordered newest-first. Add new version strings here when releasing.
 WarbandAccountant.ChangelogVersions = {
+    "2.1.5",
+    "2.1.4",
+    "2.1.3",
+    "2.1.2",
+    "2.1.1",
     "2.1.0",
     "2.0.1",
     "2.0.0",
@@ -33,6 +38,44 @@ WarbandAccountant.ChangelogIcon = "Interface\\AddOns\\WarbandAccountant\\Texture
 
 -- Keyed by version string. Each value is a list of entry tables.
 WarbandAccountant.Changelog = {
+
+    ["2.1.5"] = {
+        { tag="Fix", text="Weekly Income always showing 0 for some regions" },
+        { tag=nil,   text="The weekly reset time was calculated from a hardcoded per-region schedule that silently fell back to the US (Tuesday) schedule whenever region detection didn't resolve correctly -- notably wrong on China's separately-operated client. Now uses the server's own reset countdown directly, which is correct for every region automatically." },
+        { tag="Fix", text="Minimap button did nothing on the first click" },
+        { tag=nil,   text="Opening the window for the very first time (minimap button, or /wba, before the window had ever been created) silently opened and immediately closed it in the same click. Only the second click actually showed anything. Fixed." },
+        { tag="New", text="/wba debuginfo command" },
+        { tag=nil,   text="Prints region, locale, realm, client build, server/local clock skew, and the weekly reset calculation -- handy to paste into a bug report." },
+    },
+
+    ["2.1.4"] = {
+        { tag="New", text="Support tab" },
+        { tag=nil,   text="A new tab in the side nav with links to the Discord and GitHub Issues, each with a click-to-select field for an easy copy." },
+        { tag="New", text="Supporters section" },
+        { tag=nil,   text="A thank-you list on the Support tab, laid out 5 names wide and scrollable as it grows." },
+        { tag="New", text="UI Scale setting" },
+        { tag=nil,   text="A new dropdown in Settings scales the whole window from 50% to 300% in 10% steps, for anything from a small laptop screen to a 4K monitor. Applies immediately and remembers your choice." },
+    },
+
+    ["2.1.3"] = {
+        { tag="New", text="First-run tutorial" },
+        { tag=nil,   text="Brand-new installs now get a short guided tour on first login: Overview, Targets, Ledger, Token Graph, and Settings, using the same tooltip style Blizzard uses for its own in-game tutorials. Existing installs don't get the tour automatically. Replay it anytime with /wba tutorial." },
+    },
+
+    ["2.1.2"] = {
+        { tag="New", text="Home Guild setting" },
+        { tag=nil,   text="A new dropdown in Settings lets you pick a specific guild's bank to always show on the Overview tab, regardless of which guild the logged-in character actually belongs to. Only guilds a GM character has synced appear in the list." },
+        { tag=nil,   text="Previously, an alt in a different guild than your GM had no way to see that guild's bank at all -- it would just show 'None tracked'." },
+        { tag="New", text="Guild Banks tab" },
+        { tag=nil,   text="Once you've synced two or more guild banks (by being Guild Master on more than one character), a new Guild Banks tab appears in the side nav listing every tracked guild, its balance, its realm, when it last synced, and a running total across all of them. Your Home Guild always sorts to the top of the list." },
+        { tag="Fix", text="Settings layout: Display box misaligned" },
+        { tag=nil,   text="The Automation/Display column split used slightly off math, so the Display box's right edge crept a few pixels past the other section boxes below it. Both columns now line up exactly." },
+    },
+
+    ["2.1.1"] = {
+        { tag="Fix", text="Confirmation popup crashing when transfers require confirmation" },
+        { tag=nil,   text="The deposit/withdraw confirmation dialog had two format placeholders but only one value was passed, causing a crash. Simplified to a single placeholder and removed the double question mark from the message." },
+    },
 
     ["2.1.0"] = {
         { tag="New",     text="Token Price Display merged in" },

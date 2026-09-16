@@ -153,10 +153,10 @@ end
 
 function Core:ShowConfirmation(transferType, amount)
     local dialogName = "WARBANDACCOUNTANT_CONFIRM_" .. transferType:upper()
-    
+
     if not StaticPopupDialogs[dialogName] then
         StaticPopupDialogs[dialogName] = {
-            text = "Warband Accountant\n\n%s %s?",
+            text = "%s",
             button1 = "Yes",
             button2 = "No",
             OnAccept = function()
@@ -168,11 +168,11 @@ function Core:ShowConfirmation(transferType, amount)
             preferredIndex = 3,
         }
     end
-    
+
     local actionText = transferType == "deposit" and "Deposit" or "Withdraw"
-    local text = string.format("%s %s %s?", actionText, WarbandAccountant.FormatGold(amount), 
-        transferType == "deposit" and "to Warband Bank?" or "from Warband Bank?")
-    
+    local dest = transferType == "deposit" and "to Warband Bank?" or "from Warband Bank?"
+    local text = string.format("%s %s %s", actionText, WarbandAccountant.FormatGold(amount), dest)
+
     StaticPopup_Show(dialogName, text)
 end
 
@@ -195,6 +195,9 @@ function Core:UpdateGuildBankData()
             Data:GetDB().guildMasterCache[Data:GetCurrentCharacterID()] = true
         end
         WarbandAccountant.UI:UpdateTooltip()
+        if WarbandAccountant.UI.UpdateGuildNavVisibility then
+            WarbandAccountant.UI:UpdateGuildNavVisibility()
+        end
     end
 end
 
@@ -226,6 +229,11 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
         -- Show update notification if needed
         C_Timer.After(3, function()
             WarbandAccountant.UI:CheckAndShowUpdateNotification()
+        end)
+
+        -- First-run tutorial for brand-new installs only
+        C_Timer.After(3, function()
+            WarbandAccountant.UI:CheckAndShowTutorial()
         end)
         
     elseif event == "PLAYER_MONEY" then
@@ -352,25 +360,18 @@ end
 function Core:GetGuildBankGold()
     local Data = WarbandAccountant.Data
     local guildName = select(1, GetGuildInfo("player"))
-    local currentRealm = GetRealmName()
     
-    -- If we're a GM of current guild, save and return current guild data
+    -- If we're a GM of current guild, always sync and prefer live data for it,
+    -- even if a different guild is set as the home guild -- live data from
+    -- the character actually standing in that guild beats a cached number.
     if guildName and Data:IsGuildMaster() then
         local gold = GetGuildBankMoney() or 0
         Data:SetGuildBankData(guildName, gold)
         return gold, guildName
     end
     
-    -- If we have cached data for current guild (from when we were GM there), show it
-    if guildName then
-        local data = Data:GetGuildBankData(guildName)
-        if data and data.realm == currentRealm then
-            return data.gold or 0, guildName
-        end
-    end
-    
-    -- If not GM of current guild, fall back to personal guild bank data
-    -- This allows alts in other guilds to still see their main's guild bank
+    -- Otherwise fall back to cached data: home guild takes priority,
+    -- then the current character's own guild.
     return self:GetPersonalGuildBankGold()
 end
 
@@ -379,11 +380,22 @@ function Core:GetPersonalGuildBankGold()
     local db = Data:GetDB()
     if not db or not db.guildBankData then return 0, nil end
 
-    local currentGuild = select(1, GetGuildInfo("player"))
     local currentRealm = GetRealmName()
 
-    -- Only show guild bank data if the character is in a guild
-    -- and we have cached data specifically for that guild.
+    -- A chosen "home guild" always takes priority over the current
+    -- character's own guild, so an alt sitting in a different guild
+    -- than your GM still shows the guild bank you actually track.
+    local homeGuild = Data:GetHomeGuild()
+    if homeGuild then
+        local data = Data:GetGuildBankData(homeGuild)
+        if data and data.realm == currentRealm then
+            return data.gold or 0, homeGuild
+        end
+    end
+
+    -- No home guild set (or no data cached for it yet) -- fall back to
+    -- the current character's own guild if we have cached data for it.
+    local currentGuild = select(1, GetGuildInfo("player"))
     if currentGuild then
         local data = Data:GetGuildBankData(currentGuild)
         if data and data.realm == currentRealm then
