@@ -9,6 +9,7 @@ end
 
 -- Minimal Blizzard addon settings entry -- just points to /wba
 function SettingsModule:RegisterBlizzardStub()
+    local L = WarbandAccountant.L
     local frame = CreateFrame("Frame", "WarbandAccountantSettingsStub", UIParent)
     frame:SetSize(400, 200)
     frame.name = "Warband Accountant"
@@ -24,20 +25,20 @@ function SettingsModule:RegisterBlizzardStub()
 
     local sub = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
     sub:SetPoint("TOP", title, "BOTTOM", 0, -10)
-    sub:SetText("All settings are inside the addon window.")
+    sub:SetText(L.STUB_SUBTITLE)
     sub:SetTextColor(0.6, 0.6, 0.6)
 
     local btn = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
     btn:SetSize(180, 40)
     btn:SetPoint("TOP", sub, "BOTTOM", 0, -20)
-    btn:SetText("Open Warband Accountant")
+    btn:SetText(L.STUB_OPEN_BTN)
     btn:SetScript("OnClick", function()
         WarbandAccountant.UI:Toggle("settings")
     end)
 
     local note = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     note:SetPoint("TOP", btn, "BOTTOM", 0, -15)
-    note:SetText("Or type: /wba")
+    note:SetText(L.STUB_NOTE)
     note:SetTextColor(0.5, 0.5, 0.5)
 
     local category = Settings.RegisterCanvasLayoutCategory(frame, "Warband Accountant")
@@ -54,26 +55,28 @@ SLASH_WARBANDACCOUNTANT1 = "/warbandaccountant"
 SLASH_WARBANDACCOUNTANT2 = "/wba"
 
 SlashCmdList["WARBANDACCOUNTANT"] = function(msg)
-    msg = msg:lower():trim()
+    local L = WarbandAccountant.L
+    local rawMsg = msg:trim()
+    msg = rawMsg:lower()
 
     if msg == "" then
         WarbandAccountant.UI:Toggle("overview")
     elseif msg == "help" then
-        print("|cFF00FF00Warband Accountant|r Commands:")
-        print("  /wba               - Toggle main window")
-        print("  /wba targets       - Open Targets tab")
-        print("  /wba ledger        - Open Ledger tab")
-        print("  /wba token         - Open Token History tab")
-        print("  /wba settings      - Open Settings tab")
-        print("  /wba changelog     - Open Changelog tab")
-        print("  /wba support       - Open Support tab (Discord/GitHub)")
-        print("  /wba tutorial      - Replay the first-run tutorial")
-        print("  /wba process       - Force process transfers")
-        print("  /wba weekly        - Debug weekly income info")
-        print("  /wba debuginfo     - Show region/realm/time diagnostics (for bug reports)")
-        print("  /wba delete <name> - Delete a character")
-        print("  /wba resetgm       - Reset Guild Master cache")
-        print("  /wba clearguild    - Clear guild bank data")
+        print("|cFF00FF00" .. L.SLASH_HELP_HEADER .. "|r")
+        print(L.SLASH_HELP_TOGGLE)
+        print(L.SLASH_HELP_TARGETS)
+        print(L.SLASH_HELP_LEDGER)
+        print(L.SLASH_HELP_TOKEN)
+        print(L.SLASH_HELP_SETTINGS)
+        print(L.SLASH_HELP_CHANGELOG)
+        print(L.SLASH_HELP_SUPPORT)
+        print(L.SLASH_HELP_TUTORIAL)
+        print(L.SLASH_HELP_PROCESS)
+        print(L.SLASH_HELP_WEEKLY)
+        print(L.SLASH_HELP_DEBUGINFO)
+        print(L.SLASH_HELP_DELETE)
+        print(L.SLASH_HELP_RESETGM)
+        print(L.SLASH_HELP_CLEARGUILD)
     elseif msg == "targets" then
         WarbandAccountant.UI:Toggle("targets")
     elseif msg == "ledger" then
@@ -183,21 +186,27 @@ SlashCmdList["WARBANDACCOUNTANT"] = function(msg)
         else
             print("|cFF00FF00Warband Accountant:|r No debug guild banks found.")
         end
+    elseif msg == "debugupdate" then
+        local Data = WarbandAccountant.Data
+        Data:SetLastSeenVersion("0.0.1")
+        WarbandAccountant.UI:CheckAndShowUpdateNotification()
+        print(string.format("|cFF00FF00Warband Accountant:|r Simulated a version update. 'Show changelog on update' is currently %s.",
+            Data:GetShowUpdateChangelog() and "ON (changelog should open)" or "OFF (changelog should NOT open)"))
     elseif msg:match("^delete ") then
-        local charName = msg:match("^delete (.+)$")
+        local charName = rawMsg:match("^[Dd][Ee][Ll][Ee][Tt][Ee]%s+(.+)$")
         if charName then
             local charID = charName .. "-" .. GetRealmName()
             local ok, result = WarbandAccountant.Data:DeleteCharacter(charID)
             if ok then
-                print("|cFF00FF00Warband Accountant:|r Deleted: " .. result)
+                print(L.MSG_PREFIX_GREEN .. L.SLASH_DELETE_SUCCESS .. result)
                 WarbandAccountant.UI:RefreshTargets()
             else
-                print("|cFFFF0000Warband Accountant:|r " .. (result or "Could not delete"))
+                print(L.MSG_PREFIX_RED .. (result or L.SLASH_DELETE_FAILED))
             end
         else
-            print("|cFFFF0000Warband Accountant:|r Usage: /wba delete CharacterName")
+            print(L.MSG_PREFIX_RED .. L.SLASH_DELETE_USAGE)
         end
     else
-        print("|cFFFF0000Warband Accountant:|r Unknown command. Type /wba help")
+        print(L.MSG_PREFIX_RED .. L.SLASH_UNKNOWN_COMMAND)
     end
 end

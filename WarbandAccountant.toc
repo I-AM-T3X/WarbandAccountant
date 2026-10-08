@@ -1,8 +1,8 @@
-## Interface: 120001, 120005, 120007
+## Interface: 120007, 120100, 120105
 ## Title: Warband Accountant
 ## Notes: Automated Warband gold management with per-character targets
 ## Author: I_AM_T3X
-## Version: 2.1.5
+## Version: 2.3.0
 ## SavedVariables: WarbandAccountantDB, TokenPriceDisplayDB, TokenPriceDisplaySettings, TokenPriceHistoryDB
 
 # Libraries
@@ -11,12 +11,17 @@ Libs\CallbackHandler-1.0\CallbackHandler-1.0.lua
 Libs\LibDataBroker-1.1\LibDataBroker-1.1.lua
 Libs\LibDBIcon-1.0\LibDBIcon-1.0.lua
 
-# Addon files - order matters: Data -> Changelog -> Settings -> UI -> Tutorial -> Core
+# Addon files - order matters: Locale -> Data -> Changelog -> Supporters -> Token -> Goals -> Settings -> Graph -> UI -> Tutorial -> Core
+Locale\enUS.lua
+Locale\zhCN.lua
+Locale.lua
 Data.lua
 Changelog.lua
 Supporters.lua
 Token.lua
+Goals.lua
 Settings.lua
+Graph.lua
 UI.lua
 Tutorial.lua
 Core.lua

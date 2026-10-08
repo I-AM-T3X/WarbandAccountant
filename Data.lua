@@ -5,7 +5,7 @@ WarbandAccountant.Data = Data
 
 local DEFAULT_TARGET = 1000000
 local CURRENT_DB_VERSION = 1
-local CURRENT_ADDON_VERSION = "2.1.5"
+local CURRENT_ADDON_VERSION = "2.3.0"
 
 local db = nil
 
@@ -31,6 +31,13 @@ function Data:Init()
     db.global.confirmTransfers = db.global.confirmTransfers or false
     db.global.sortMode = db.global.sortMode or "arrow"
     db.global.uiScalePercent = db.global.uiScalePercent or 100
+    db.global.language = db.global.language or GetLocale()
+    if db.global.thousandsSeparator == nil then
+        db.global.thousandsSeparator = ","
+    end
+    if WarbandAccountant.ApplyLocale then
+        WarbandAccountant:ApplyLocale(db.global.language)
+    end
 
     -- Only true brand-new installs get the automatic first-run tutorial.
     -- Anyone updating from an earlier version already has WarbandAccountantDB,
@@ -71,6 +78,7 @@ function Data:Init()
     
     db.characters = db.characters or {}
     db.ledger = db.ledger or {}
+    db.accountTotalHistory = db.accountTotalHistory or {}
     
     db.guildLedger = db.guildLedger or {}
     db.guildSettings = db.guildSettings or {
@@ -254,8 +262,8 @@ function Data:AddLedgerEntry(entry)
         note          = entry.note          or ""
     })
     
-    if #db.ledger > 1000 then
-        for i = 1001, #db.ledger do
+    if #db.ledger > 5000 then
+        for i = 5001, #db.ledger do
             db.ledger[i] = nil
         end
     end
@@ -265,6 +273,10 @@ function Data:AddLedgerEntry(entry)
         db.global.totalDeposited = (db.global.totalDeposited or 0) + amt
     elseif entry.type == "WITHDRAW" or entry.type == "MANUAL_WITHDRAW" then
         db.global.totalWithdrawn = (db.global.totalWithdrawn or 0) + amt
+    end
+    -- Let goals / the token frame's weekly line react to the new balance
+    if WarbandAccountant.OnWarbandBalanceChanged then
+        WarbandAccountant.OnWarbandBalanceChanged(entry.balanceAfter or 0)
     end
 end
 
@@ -276,6 +288,95 @@ function Data:GetLedgerEntries(limit)
         table.insert(entries, db.ledger[i])
     end
     return entries
+end
+
+-- Sentinel used to select "Account Total" (Warband Bank + every character's
+-- current gold, snapshotted over time) as opposed to nil (Warband Bank only)
+-- or a real character ID (that character's net Warband Bank contribution).
+WarbandAccountant.ACCOUNT_TOTAL_KEY = "__ACCOUNT_TOTAL__"
+
+-- Returns {timestamp, value} points, oldest first, for the Gold History
+-- graph.
+--
+-- charID == nil: Warband Bank total over time -- built entirely from
+-- existing Ledger data (each entry already records the exact balance
+-- after that transaction), no separate tracking needed.
+--
+-- charID == WarbandAccountant.ACCOUNT_TOTAL_KEY: Warband Bank + every
+-- character's current gold, over time. Unlike the other two modes this
+-- can't be derived from existing data (the addon never logged historical
+-- on-hand gold), so it's built from a separate periodic snapshot -- see
+-- Data:RecordAccountTotalSnapshot. History only exists from whenever that
+-- started running.
+--
+-- charID given (anything else): that character's cumulative net Warband
+-- Bank contribution over time (running sum of their own deposits minus
+-- withdrawals). This is NOT their personal on-hand gold -- the addon has
+-- never logged that historically, only the live current value.
+function Data:GetBalanceHistory(charID)
+    if charID == WarbandAccountant.ACCOUNT_TOTAL_KEY then
+        return self:GetAccountTotalHistory()
+    end
+
+    if not db or not db.ledger then return {} end
+
+    local points = {}
+    if not charID then
+        -- db.ledger is newest-first; walk backwards for oldest-first output
+        for i = #db.ledger, 1, -1 do
+            local e = db.ledger[i]
+            table.insert(points, { timestamp = e.timestamp, value = e.balanceAfter or 0, entry = e })
+        end
+    else
+        local running = 0
+        for i = #db.ledger, 1, -1 do
+            local e = db.ledger[i]
+            if e.character == charID then
+                local sign = (e.type == "DEPOSIT" or e.type == "MANUAL_DEPOSIT") and 1 or -1
+                running = running + sign * (e.amount or 0)
+                table.insert(points, { timestamp = e.timestamp, value = running, entry = e })
+            end
+        end
+    end
+    return points
+end
+
+-- Current Account Total: Warband Bank gold + every tracked character's
+-- current on-hand gold. A live number, always available with no history
+-- needed.
+function Data:GetAccountTotal()
+    local warband = (WarbandAccountant.Core and WarbandAccountant.Core:GetWarbandGold()) or 0
+    return warband + self:GetTotalTrackedGold()
+end
+
+-- Periodic snapshot store for the Account Total history graph. Capped like
+-- the Ledger; a fresh install naturally has a short history that builds up
+-- over time, since this can't be derived retroactively from existing data.
+local ACCOUNT_TOTAL_HISTORY_CAP = 3000
+
+function Data:RecordAccountTotalSnapshot()
+    if not db then return end
+    db.accountTotalHistory = db.accountTotalHistory or {}
+    table.insert(db.accountTotalHistory, 1, {
+        timestamp = time(),
+        value = self:GetAccountTotal(),
+    })
+    if #db.accountTotalHistory > ACCOUNT_TOTAL_HISTORY_CAP then
+        for i = ACCOUNT_TOTAL_HISTORY_CAP + 1, #db.accountTotalHistory do
+            db.accountTotalHistory[i] = nil
+        end
+    end
+end
+
+function Data:GetAccountTotalHistory()
+    if not db or not db.accountTotalHistory then return {} end
+    local points = {}
+    -- newest-first in storage; walk backwards for oldest-first output
+    for i = #db.accountTotalHistory, 1, -1 do
+        local e = db.accountTotalHistory[i]
+        table.insert(points, { timestamp = e.timestamp, value = e.value or 0 })
+    end
+    return points
 end
 
 function Data:GetTotalLedgerStats()
@@ -486,7 +587,20 @@ function Data:GetWeeklyIncome()
         end
     end
 
-    if not balanceAtReset then return 0 end
+    if not balanceAtReset then
+        -- No entry predates this week's reset -- e.g. a brand new install,
+        -- or the ledger cap trimmed off everything older. Rather than
+        -- reporting 0 (which would hide real activity), use the balance
+        -- just BEFORE the oldest entry we do have as the baseline. Since
+        -- every stored entry is newer than the reset in this branch, that
+        -- oldest entry is itself from this week, so this correctly reflects
+        -- all the income we actually know about.
+        local oldest = db.ledger[#db.ledger]
+        if not oldest then return 0 end
+        local sign = (oldest.type == "DEPOSIT" or oldest.type == "MANUAL_DEPOSIT") and 1 or -1
+        balanceAtReset = (oldest.balanceAfter or 0) - sign * (oldest.amount or 0)
+    end
+
     return balanceNow - balanceAtReset
 end
 
@@ -548,6 +662,46 @@ function Data:SetUIScale(percent)
     if not db then return end
     db.global = db.global or {}
     db.global.uiScalePercent = percent
+end
+
+-- Player's chosen UI language (locale code, e.g. "enUS", "zhCN"). Falls back
+-- to their client locale until they've picked one explicitly.
+function Data:GetLanguage()
+    if not db or not db.global then return GetLocale() end
+    return db.global.language or GetLocale()
+end
+
+function Data:SetLanguage(code)
+    if not db then return end
+    db.global = db.global or {}
+    db.global.language = code
+    if WarbandAccountant.ApplyLocale then
+        WarbandAccountant:ApplyLocale(code)
+    end
+end
+
+-- Thousands separator for gold amounts: "," or "." or "" (none).
+function Data:GetThousandsSeparator()
+    if not db or not db.global then return "," end
+    return db.global.thousandsSeparator or ","
+end
+
+function Data:SetThousandsSeparator(sep)
+    if not db then return end
+    db.global = db.global or {}
+    db.global.thousandsSeparator = sep
+end
+
+-- Whether to auto-open the Changelog tab when a new version is detected.
+function Data:GetShowUpdateChangelog()
+    if not db or not db.global then return true end
+    return db.global.showUpdateChangelog ~= false
+end
+
+function Data:SetShowUpdateChangelog(show)
+    if not db then return end
+    db.global = db.global or {}
+    db.global.showUpdateChangelog = show
 end
 
 function Data:DeleteCharacter(charID)

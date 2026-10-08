@@ -10,9 +10,18 @@ function WarbandAccountant.FormatGold(copper)
     local silver = math.floor((copper % 10000) / 100)
     local remainingCopper = copper % 100
     local prefix = negative and "-" or ""
-    
+
+    local sep = (WarbandAccountant.Data and WarbandAccountant.Data:GetThousandsSeparator()) or ""
+    local goldStr = tostring(gold)
+    if sep ~= "" and gold >= 1000 then
+        goldStr = goldStr:reverse():gsub("(%d%d%d)", "%1" .. sep):reverse()
+        if goldStr:sub(1, #sep) == sep then
+            goldStr = goldStr:sub(#sep + 1)
+        end
+    end
+
     if gold > 0 then
-        return string.format("%s|cFFFFD700%dg|r |cFFC7C7C7%02ds|r |cFFEDA55F%02dc|r", prefix, gold, silver, remainingCopper)
+        return string.format("%s|cFFFFD700%sg|r |cFFC7C7C7%02ds|r |cFFEDA55F%02dc|r", prefix, goldStr, silver, remainingCopper)
     elseif silver > 0 then
         return string.format("%s|cFFC7C7C7%ds|r |cFFEDA55F%02dc|r", prefix, silver, remainingCopper)
     else
@@ -25,8 +34,8 @@ local hasProcessedThisSession = false
 local pendingAutoAmount = 0
 local pendingAutoType = nil
 local lastWarbandBalance = 0
+local accountTotalTicker
 local guildBankOpen = false
-local mailSessionStart = nil   -- gold snapshot when mail opens
 
 local function GetWarbandGold()
     return C_Bank.FetchDepositedMoney(Enum.BankType.Account) or 0
@@ -79,7 +88,7 @@ function Core:ProcessTransfers(skipConfirmation)
     
     if charData.paused then
         if not skipConfirmation then
-            self:NotifyTransfer("skipped (paused)", 0)
+            self:NotifyTransfer(WarbandAccountant.L.CORE_ACTION_SKIPPED_PAUSED, 0)
         end
         hasProcessedThisSession = true
         return
@@ -100,11 +109,12 @@ function Core:ProcessTransfers(skipConfirmation)
             pendingAutoType = "DEPOSIT"
             lastWarbandBalance = GetWarbandGold()
             
-            local success = ExecuteDeposit(excess)
+            local success, err = ExecuteDeposit(excess)
             
             if not success then
                 pendingAutoAmount = 0
                 pendingAutoType = nil
+                self:NotifyError(err)
             end
         end
     elseif currentGold < targetGold then
@@ -148,17 +158,19 @@ function Core:NotifyTransfer(action, amount)
 end
 
 function Core:NotifyError(err)
-    print(string.format("|cFFFF0000Warband Accountant Error:|r %s", err or "Unknown error"))
+    local L = WarbandAccountant.L
+    print(string.format(L.CORE_ERROR_PREFIX, err or L.CORE_UNKNOWN_ERROR))
 end
 
 function Core:ShowConfirmation(transferType, amount)
+    local L = WarbandAccountant.L
     local dialogName = "WARBANDACCOUNTANT_CONFIRM_" .. transferType:upper()
 
     if not StaticPopupDialogs[dialogName] then
         StaticPopupDialogs[dialogName] = {
             text = "%s",
-            button1 = "Yes",
-            button2 = "No",
+            button1 = L.SETTINGS_YES,
+            button2 = L.SETTINGS_NO,
             OnAccept = function()
                 Core:ProcessTransfers(true)
             end,
@@ -169,8 +181,8 @@ function Core:ShowConfirmation(transferType, amount)
         }
     end
 
-    local actionText = transferType == "deposit" and "Deposit" or "Withdraw"
-    local dest = transferType == "deposit" and "to Warband Bank?" or "from Warband Bank?"
+    local actionText = transferType == "deposit" and L.CORE_CONFIRM_DEPOSIT_ACTION or L.CORE_CONFIRM_WITHDRAW_ACTION
+    local dest = transferType == "deposit" and L.CORE_CONFIRM_TO_BANK or L.CORE_CONFIRM_FROM_BANK
     local text = string.format("%s %s %s", actionText, WarbandAccountant.FormatGold(amount), dest)
 
     StaticPopup_Show(dialogName, text)
@@ -201,6 +213,26 @@ function Core:UpdateGuildBankData()
     end
 end
 
+local function recordManualTransaction(delta, currentBalance)
+    local Data = WarbandAccountant.Data
+    local L = WarbandAccountant.L
+    if delta > 0 then
+        Data:AddLedgerEntry({
+            amount = delta,
+            type = "MANUAL_DEPOSIT",
+            balanceAfter = currentBalance,
+            note = L.CORE_NOTE_MANUAL_DEPOSIT
+        })
+    elseif delta < 0 then
+        Data:AddLedgerEntry({
+            amount = math.abs(delta),
+            type = "MANUAL_WITHDRAW",
+            balanceAfter = currentBalance,
+            note = L.CORE_NOTE_MANUAL_WITHDRAW
+        })
+    end
+end
+
 local eventFrame = CreateFrame("Frame")
 eventFrame:RegisterEvent("PLAYER_LOGIN")
 eventFrame:RegisterEvent("PLAYER_MONEY")
@@ -210,21 +242,43 @@ eventFrame:RegisterEvent("ACCOUNT_MONEY")
 eventFrame:RegisterEvent("GUILDBANKFRAME_OPENED")
 eventFrame:RegisterEvent("GUILDBANKFRAME_CLOSED")
 eventFrame:RegisterEvent("GUILDBANK_UPDATE_MONEY")
-eventFrame:RegisterEvent("MAIL_SHOW")
-eventFrame:RegisterEvent("MAIL_CLOSED")
 
 eventFrame:SetScript("OnEvent", function(self, event, ...)
     if event == "PLAYER_LOGIN" then
         WarbandAccountant.Data:Init()
         WarbandAccountant.Settings:Init()
+        if WarbandAccountant.Token and WarbandAccountant.Token.RefreshLocaleText then
+            WarbandAccountant.Token:RefreshLocaleText()
+        end
         if WarbandAccountant.UI then WarbandAccountant.UI:Init() else print("|cFFFF0000Warband Accountant:|r UI failed to load.") end
+
+        local L = WarbandAccountant.L
+        print(L.MSG_PREFIX_GOLD .. L.MSG_STARTUP_LOCALIZATION)
+        print(L.MSG_PREFIX_GOLD .. L.MSG_STARTUP_SUPPORT)
         
         lastWarbandBalance = GetWarbandGold()
         
         C_Timer.After(1, function()
             WarbandAccountant.Data:UpdateCharacterGold()
             WarbandAccountant.UI:UpdateTooltip()
+            if WarbandAccountant.Token and WarbandAccountant.Token.UpdateWeeklyLine then
+                WarbandAccountant.Token:UpdateWeeklyLine()
+            end
+            if WarbandAccountant.Goals then
+                WarbandAccountant.Goals:Check()
+            end
+            WarbandAccountant.Data:RecordAccountTotalSnapshot()
         end)
+
+        -- Periodic Account Total snapshot, so the Gold History graph's
+        -- Account Total view has more than one point per session. Every
+        -- 15 minutes is enough resolution for a trend without growing the
+        -- history too fast.
+        if not accountTotalTicker then
+            accountTotalTicker = C_Timer.NewTicker(900, function()
+                WarbandAccountant.Data:RecordAccountTotalSnapshot()
+            end)
+        end
         
         -- Show update notification if needed
         C_Timer.After(3, function()
@@ -267,13 +321,13 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
                     amount = pendingAutoAmount,
                     type = pendingAutoType,
                     balanceAfter = currentBalance,
-                    note = pendingAutoType == "DEPOSIT" and "Auto-deposit excess" or "Auto-withdraw deficit"
+                    note = pendingAutoType == "DEPOSIT" and WarbandAccountant.L.CORE_NOTE_AUTO_DEPOSIT or WarbandAccountant.L.CORE_NOTE_AUTO_WITHDRAW
                 })
                 
                 if pendingAutoType == "DEPOSIT" then
-                    Core:NotifyTransfer("deposited", pendingAutoAmount)
+                    Core:NotifyTransfer(WarbandAccountant.L.CORE_ACTION_DEPOSITED, pendingAutoAmount)
                 else
-                    Core:NotifyTransfer("withdrawn", pendingAutoAmount)
+                    Core:NotifyTransfer(WarbandAccountant.L.CORE_ACTION_WITHDRAWN, pendingAutoAmount)
                 end
                 
                 hasProcessedThisSession = true
@@ -311,43 +365,8 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
             Core:UpdateGuildBankData()
         end
         
-    elseif event == "MAIL_SHOW" then
-        -- Snapshot gold when mail opens so we can detect gold received from mail
-        mailSessionStart = GetMoney()
-        
-    elseif event == "MAIL_CLOSED" then
-        if mailSessionStart then
-            local goldAfter = GetMoney()
-            local mailGold = goldAfter - mailSessionStart
-            if mailGold > 0 then
-                -- Gold came in from mail; PLAYER_MONEY already fired to update
-                -- UpdateCharacterGold. Weekly income is recalculated on-demand
-                -- from the ledger so nothing extra needed here.
-                WarbandAccountant.UI:UpdateTooltip()
-            end
-            mailSessionStart = nil
-        end
     end
 end)
-
-function recordManualTransaction(delta, currentBalance)
-    local Data = WarbandAccountant.Data
-    if delta > 0 then
-        Data:AddLedgerEntry({
-            amount = delta,
-            type = "MANUAL_DEPOSIT",
-            balanceAfter = currentBalance,
-            note = "Manual deposit"
-        })
-    elseif delta < 0 then
-        Data:AddLedgerEntry({
-            amount = math.abs(delta),
-            type = "MANUAL_WITHDRAW",
-            balanceAfter = currentBalance,
-            note = "Manual withdrawal"
-        })
-    end
-end
 
 function Core:IsBankOpen()
     return isBankOpen
@@ -366,7 +385,10 @@ function Core:GetGuildBankGold()
     -- the character actually standing in that guild beats a cached number.
     if guildName and Data:IsGuildMaster() then
         local gold = GetGuildBankMoney() or 0
-        Data:SetGuildBankData(guildName, gold)
+        local existing = Data:GetGuildBankData(guildName)
+        if not existing or existing.gold ~= gold then
+            Data:SetGuildBankData(guildName, gold)
+        end
         return gold, guildName
     end
     

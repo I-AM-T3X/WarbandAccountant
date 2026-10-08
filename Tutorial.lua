@@ -14,11 +14,12 @@ local UI = WarbandAccountant.UI
 local TUTORIAL_SYSTEM = "WBA_Tutorial"
 
 local TUTORIAL_STEPS = {
-    { tab = "overview", text = "Welcome to Warband Accountant! This is your Overview: Warband Bank balance, gold in bags, and weekly income at a glance." },
-    { tab = "targets",  text = "Head here now and set a gold target for this character. Anything above target auto-deposits to the Warband Bank; a shortfall auto-withdraws to top you up." },
-    { tab = "ledger",   text = "Every automatic and manual transfer is logged here, so you can always see where your gold went." },
-    { tab = "token",    text = "Track the WoW Token price over time right from this window. It's empty right now since there's no history yet -- it fills in as prices get checked over time, or you can import history from the old standalone Token Price Display addon if you used it." },
-    { tab = "settings", text = "Automation, category defaults, and more live here. You can replay this tour anytime with /wba tutorial." },
+    { tab = "overview", key = "TUTORIAL_STEP_OVERVIEW" },
+    { tab = "targets",  key = "TUTORIAL_STEP_TARGETS" },
+    { tab = "ledger",   key = "TUTORIAL_STEP_LEDGER" },
+    { tab = "goals",    key = "TUTORIAL_STEP_GOALS" },
+    { tab = "token",    key = "TUTORIAL_STEP_TOKEN" },
+    { tab = "settings", key = "TUTORIAL_STEP_SETTINGS" },
 }
 
 local function ShowTutorialStep(index)
@@ -35,7 +36,7 @@ local function ShowTutorialStep(index)
     UI:SwitchTab(step.tab)
 
     HelpTip:Show(UI:GetMainFrame(), {
-        text = step.text,
+        text = WarbandAccountant.L[step.key],
         buttonStyle = HelpTip.ButtonStyle.GotIt,
         targetPoint = HelpTip.Point.RightEdgeCenter,
         system = TUTORIAL_SYSTEM,

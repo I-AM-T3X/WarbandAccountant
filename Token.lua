@@ -5,7 +5,7 @@ WarbandAccountant.Token = Token
 
 -- Main frame and locals
 local frame = CreateFrame("Frame", "WBATokenPriceFrame", UIParent, "BackdropTemplate")
-local labelText, priceText, priceIndicator
+local labelText, priceText, priceIndicator, weeklyText
 local updateTicker
 local lastAlertTime = 0
 
@@ -13,11 +13,11 @@ local MIN_TIME_BETWEEN_RECORDS = 240 -- 4 minutes minimum between data points
 local ALERT_COOLDOWN = 240 -- 4 minutes between chat alerts
 
 local FREQUENCY_OPTIONS = {
-    { text = "5 minutes",  value = 300  },
-    { text = "10 minutes", value = 600  },
-    { text = "20 minutes", value = 1200 },
-    { text = "40 minutes", value = 2400 },
-    { text = "60 minutes", value = 3600 },
+    { minutes = 5,  value = 300  },
+    { minutes = 10, value = 600  },
+    { minutes = 20, value = 1200 },
+    { minutes = 40, value = 2400 },
+    { minutes = 60, value = 3600 },
 }
 Token.FREQUENCY_OPTIONS = FREQUENCY_OPTIONS
 
@@ -32,6 +32,7 @@ local DEFAULTS = {
     alertHighThreshold = nil,
     updateInterval = 300,
     showFloatingFrame = true,
+    showWeeklyIncome = false,
 }
 Token.DEFAULTS = DEFAULTS
 
@@ -43,6 +44,17 @@ local function FormatGold(number)
     return WarbandAccountant.FormatGold(number)
 end
 Token.FormatGold = FormatGold
+
+-- Called from Core.lua right after Data:Init() corrects the locale from the
+-- player's saved preference. SetupFrame() (which first sets labelText) runs
+-- on ADDON_LOADED, before that correction happens, so without this the
+-- floating label could stay stuck in the client-locale guess all session if
+-- the player's saved language differs from it.
+function Token:RefreshLocaleText()
+    if labelText then
+        labelText:SetText(WarbandAccountant.L.TOKEN_FLOATING_LABEL)
+    end
+end
 
 
 -- Initialize saved variables
@@ -134,12 +146,12 @@ function Token:ImportLegacyHistory()
     -- This handles the case where WarbandAccountant's own init ran first
     -- and the legacy addon's data wasn't merged in.
     if not TokenPriceHistoryDB or not TokenPriceHistoryDB.prices then
-        return 0, "No legacy Token Price Display data found in this session. Make sure the old addon is enabled at the character select screen at least once before importing, then log in and try again."
+        return 0, WarbandAccountant.L.TOKEN_IMPORT_ERR_NOT_FOUND
     end
 
     local existing = TokenPriceHistoryDB.prices
     if #existing == 0 then
-        return 0, "Legacy data table found but it's empty."
+        return 0, WarbandAccountant.L.TOKEN_IMPORT_ERR_EMPTY
     end
 
     -- Data is already in the same table WarbandAccountant reads from
@@ -234,15 +246,15 @@ local function SetupFrame()
 
     frame:SetScript("OnEnter", function(self)
         GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-        GameTooltip:AddLine("WoW Token Price")
-        GameTooltip:AddLine("Right-click for history", 0.7, 0.7, 0.7)
+        GameTooltip:AddLine(WarbandAccountant.L.TOKEN_TOOLTIP_TITLE)
+        GameTooltip:AddLine(WarbandAccountant.L.TOKEN_TOOLTIP_HISTORY, 0.7, 0.7, 0.7)
         GameTooltip:Show()
     end)
     frame:SetScript("OnLeave", function() GameTooltip:Hide() end)
 
     labelText = frame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     labelText:SetPoint("LEFT", frame, "LEFT", 10, 0)
-    labelText:SetText("WoW Token:")
+    labelText:SetText(WarbandAccountant.L.TOKEN_FLOATING_LABEL)
 
     priceText = frame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     priceText:SetPoint("LEFT", labelText, "RIGHT", 5, 0)
@@ -251,15 +263,26 @@ local function SetupFrame()
     priceIndicator = frame:CreateTexture(nil, "OVERLAY")
     priceIndicator:SetSize(16, 16)
     priceIndicator:Hide()
+
+    -- Optional second line: this week's Warband Bank income
+    weeklyText = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    weeklyText:Hide()
+end
+
+local function WeeklyLineShown()
+    return TokenPriceDisplaySettings and TokenPriceDisplaySettings.showWeeklyIncome == true
 end
 
 local function AdjustFrameSize()
     if TokenPriceDisplaySettings.displayType == "icon" then
         local iconWidth = TokenPriceDisplaySettings.iconSize
         local textWidth = priceText:GetStringWidth()
+        if WeeklyLineShown() then
+            textWidth = math.max(textWidth, weeklyText:GetStringWidth())
+        end
         local width = 5 + iconWidth + 5 + textWidth + 10
         frame:SetWidth(width)
-        frame:SetHeight(math.max(30, TokenPriceDisplaySettings.iconSize + 4))
+        frame:SetHeight(math.max(WeeklyLineShown() and 44 or 30, TokenPriceDisplaySettings.iconSize + 4))
     else
         local padding = 20
         local width = padding
@@ -274,7 +297,11 @@ local function AdjustFrameSize()
             width = width + 5 + 16
         end
 
-        frame:SetHeight(30)
+        if WeeklyLineShown() then
+            width = math.max(width, 20 + weeklyText:GetStringWidth())
+        end
+
+        frame:SetHeight(WeeklyLineShown() and 44 or 30)
         frame:SetWidth(math.max(120, width))
     end
 end
@@ -292,19 +319,31 @@ local function ApplySettings()
         priceIndicator:Show()
 
         priceText:ClearAllPoints()
-        priceText:SetPoint("LEFT", priceIndicator, "RIGHT", 5, 0)
+        priceText:SetPoint("LEFT", priceIndicator, "RIGHT", 5, WeeklyLineShown() and 7 or 0)
+
+        weeklyText:ClearAllPoints()
+        weeklyText:SetPoint("TOPLEFT", priceText, "BOTTOMLEFT", 0, -3)
     else
         labelText:Show()
+        labelText:ClearAllPoints()
+        labelText:SetPoint("LEFT", frame, "LEFT", 10, WeeklyLineShown() and 7 or 0)
         priceText:ClearAllPoints()
         priceText:SetPoint("LEFT", labelText, "RIGHT", 5, 0)
+
+        weeklyText:ClearAllPoints()
+        weeklyText:SetPoint("TOPLEFT", labelText, "BOTTOMLEFT", 0, -3)
 
         priceIndicator:ClearAllPoints()
         priceIndicator:SetPoint("LEFT", priceText, "RIGHT", 5, 0)
     end
 
-    if not TokenPriceDisplaySettings.showArrow then
+    -- In icon mode priceIndicator IS the token icon, so only hide it for
+    -- the arrow setting in text mode.
+    if not TokenPriceDisplaySettings.showArrow and TokenPriceDisplaySettings.displayType ~= "icon" then
         priceIndicator:Hide()
     end
+
+    if WeeklyLineShown() then weeklyText:Show() else weeklyText:Hide() end
 
     if TokenPriceDisplaySettings.showFloatingFrame == false then
         frame:Hide()
@@ -315,6 +354,19 @@ local function ApplySettings()
     AdjustFrameSize()
 end
 Token.ApplySettings = ApplySettings
+
+-- Refreshes the optional "This Week" line (called after every Warband Bank
+-- transaction, at login, on each token price tick, and when toggled).
+function Token:UpdateWeeklyLine()
+    if not weeklyText or not TokenPriceDisplaySettings then return end
+    if WeeklyLineShown() then
+        local L = WarbandAccountant.L
+        local weekly = WarbandAccountant.Data and WarbandAccountant.Data:GetWeeklyIncome() or 0
+        local sign = weekly >= 0 and "|cFF33FF33+|r" or "|cFFFF4444-|r"
+        weeklyText:SetText(L.TOKEN_FLOATING_WEEKLY .. " " .. sign .. WarbandAccountant.FormatGold(math.abs(weekly)))
+    end
+    ApplySettings()
+end
 
 function Token:ShowColorPicker(colorType)
     local settings = TokenPriceDisplaySettings
@@ -372,13 +424,13 @@ local function CheckAlerts(currentGold)
     local alerted = false
 
     if low and currentGold <= low then
-        print(string.format("|cffff0000[Token Alert]: WoW Token price is %s! (Below threshold: %s)|r",
+        print(string.format(WarbandAccountant.L.TOKEN_ALERT_LOW,
             FormatGold(currentGold * 10000), FormatGold(low * 10000)))
         alerted = true
     end
 
     if high and currentGold >= high then
-        print(string.format("|cff00ff00[Token Alert]: WoW Token price is %s! (Above threshold: %s)|r",
+        print(string.format(WarbandAccountant.L.TOKEN_ALERT_HIGH,
             FormatGold(currentGold * 10000), FormatGold(high * 10000)))
         alerted = true
     end
@@ -393,7 +445,7 @@ local function UpdateTokenPrice()
 
     if not price then
         if priceText then
-            priceText:SetText("Loading...")
+            priceText:SetText(WarbandAccountant.L.OVERVIEW_LOADING)
             priceIndicator:Hide()
             AdjustFrameSize()
         end
@@ -427,6 +479,7 @@ local function UpdateTokenPrice()
     end
 
     TokenPriceDisplaySettings.lastKnownPrice = goldPrice
+    if WeeklyLineShown() then Token:UpdateWeeklyLine() end
     AdjustFrameSize()
     CheckAlerts(goldPrice)
 
