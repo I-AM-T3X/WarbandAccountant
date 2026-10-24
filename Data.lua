@@ -5,7 +5,7 @@ WarbandAccountant.Data = Data
 
 local DEFAULT_TARGET = 1000000
 local CURRENT_DB_VERSION = 1
-local CURRENT_ADDON_VERSION = "2.3.0"
+local CURRENT_ADDON_VERSION = "2.3.1"
 
 local db = nil
 

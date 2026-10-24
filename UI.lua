@@ -1,5 +1,7 @@
 local ADDON_NAME, WarbandAccountant = ...
 local UI = {}
+local DD = WarbandAccountant.Dropdown
+local TB = WarbandAccountant.TextBox
 WarbandAccountant.UI = UI
 
 -- -- Constants -----------------------------------------------------------------
@@ -167,15 +169,9 @@ end
 
 -- -- Stat Card -----------------------------------------------------------------
 local function CreateStatCard(parent, title, x, y, w, h)
-    local card = CreateFrame("Frame", nil, parent, "BackdropTemplate")
+    local card = CreateFrame("Frame", nil, parent, "TooltipBackdropTemplate")
     card:SetSize(w or 200, h or 90)
     card:SetPoint("TOPLEFT", x, y)
-    card:SetBackdrop({
-        bgFile   = "Interface\\DialogFrame\\UI-DialogBox-Background-Dark",
-        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
-        tile = true, tileSize = 16, edgeSize = 12,
-        insets = { left=3, right=3, top=3, bottom=3 }
-    })
     card:SetBackdropColor(0.08, 0.07, 0.04, 0.95)
     card:SetBackdropBorderColor(0.35, 0.30, 0.15, 0.8)
 
@@ -198,7 +194,7 @@ end
 
 -- -- Scrollable content helper -------------------------------------------------
 local function CreateScrollArea(parent, x, y, w, h)
-    local sf = CreateFrame("ScrollFrame", nil, parent, "UIPanelScrollFrameTemplate")
+    local sf = CreateFrame("ScrollFrame", nil, parent, "ScrollFrameTemplate")
     sf:SetPoint("TOPLEFT", parent, "TOPLEFT", x, y)
     sf:SetSize(w - 24, h)
 
@@ -526,13 +522,8 @@ function UI:RefreshTargets()
         row.bg:SetAllPoints()
 
         -- Reorder: both variants exist always, toggled per refresh by sort mode
-        row.orderEdit = CreateFrame("EditBox", nil, row, "InputBoxTemplate")
-        row.orderEdit:SetSize(36, 22)
+        row.orderEdit = TB.Create(row, 36, 22, { numeric = true, maxLetters = 3, justify = "CENTER" })
         row.orderEdit:SetPoint("LEFT", col.reorder, 0)
-        row.orderEdit:SetAutoFocus(false)
-        row.orderEdit:SetNumeric(true)
-        row.orderEdit:SetMaxLetters(3)
-        row.orderEdit:SetJustifyH("CENTER")
 
         row.upBtn = CreateFrame("Button", nil, row)
         row.upBtn:SetSize(16, 16)
@@ -566,18 +557,12 @@ function UI:RefreshTargets()
 
         -- Unnamed dropdown -- a named "WBATypeDD_i" frame here would
         -- register a new global every refresh and never get cleaned up
-        row.typeDD = CreateFrame("Frame", nil, row, "UIDropDownMenuTemplate")
+        row.typeDD = DD.Create(nil, row)
         row.typeDD:SetPoint("LEFT", col.main - 16, 0)
-        UIDropDownMenu_SetWidth(row.typeDD, 120)
+        DD.SetWidth(row.typeDD, 120)
 
-        row.tgtEdit = CreateFrame("EditBox", nil, row, "InputBoxTemplate")
-        row.tgtEdit:SetSize(90, 22)
+        row.tgtEdit = TB.Create(row, 90, 22, { numeric = true, maxLetters = 7, justify = "RIGHT" })
         row.tgtEdit:SetPoint("LEFT", col.target, 0)
-        row.tgtEdit:SetAutoFocus(false)
-        row.tgtEdit:SetNumeric(true)
-        row.tgtEdit:SetMaxLetters(7)
-        row.tgtEdit:SetJustifyH("RIGHT")
-        row.tgtEdit:SetTextInsets(2, 6, 0, 0)
 
         row.gLabel = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
         row.gLabel:SetPoint("LEFT", row.tgtEdit, "RIGHT", 4, 0)
@@ -701,30 +686,30 @@ function UI:RefreshTargets()
         -- Character type dropdown
         local currentType = Data:GetCharacterType(char.id)
         local displayName = currentType and Data:GetCategoryName(currentType) or "(None)"
-        UIDropDownMenu_SetText(row.typeDD, displayName)
-        UIDropDownMenu_Initialize(row.typeDD, function()
-            local info = UIDropDownMenu_CreateInfo()
+        DD.SetText(row.typeDD, displayName)
+        DD.Initialize(row.typeDD, function()
+            local info = DD.CreateInfo()
             info.text    = "(None)"
             info.arg1    = nil
             info.checked = (currentType == nil)
             info.func    = function()
                 Data:SetCharacterType(char.id, nil)
-                UIDropDownMenu_SetText(row.typeDD, "(None)")
+                DD.SetText(row.typeDD, "(None)")
                 UI:UpdateTooltip()
             end
-            UIDropDownMenu_AddButton(info)
+            DD.AddButton(info)
             for _, key in ipairs(Data:GetAllCategoryKeys()) do
-                info = UIDropDownMenu_CreateInfo()
+                info = DD.CreateInfo()
                 info.text    = Data:GetCategoryName(key)
                 info.arg1    = key
                 info.checked = (currentType == key)
                 info.func    = function(btn, arg1)
                     Data:SetCharacterType(char.id, arg1)
-                    UIDropDownMenu_SetText(row.typeDD, btn:GetText())
+                    DD.SetText(row.typeDD, btn:GetText())
                     UI:RefreshTargets()
                     UI:UpdateTooltip()
                 end
-                UIDropDownMenu_AddButton(info)
+                DD.AddButton(info)
             end
         end)
 
@@ -786,10 +771,10 @@ local function BuildLedgerTab(panel)
     panel._col = col
 
     -- Row 1: Filter label + dropdown anchored top-right
-    ledgerFilterDropdown = CreateFrame("Frame", "WBALedgerFilterDD", panel, "UIDropDownMenuTemplate")
+    ledgerFilterDropdown = DD.Create("WBALedgerFilterDD", panel)
     ledgerFilterDropdown:SetPoint("TOPRIGHT", panel, "TOPRIGHT", 8, -4)
-    UIDropDownMenu_SetWidth(ledgerFilterDropdown, 160)
-    UIDropDownMenu_SetText(ledgerFilterDropdown, L.LEDGER_FILTER_ALL)
+    DD.SetWidth(ledgerFilterDropdown, 160)
+    DD.SetText(ledgerFilterDropdown, L.LEDGER_FILTER_ALL)
 
     local filterLbl = panel:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     filterLbl:SetPoint("RIGHT", ledgerFilterDropdown, "LEFT", 16, 1)
@@ -805,16 +790,16 @@ local function BuildLedgerTab(panel)
     ledgerStatsText:SetJustifyH("LEFT")
 
     local function InitFilter()
-        UIDropDownMenu_Initialize(ledgerFilterDropdown, function()
-            local info = UIDropDownMenu_CreateInfo()
+        DD.Initialize(ledgerFilterDropdown, function()
+            local info = DD.CreateInfo()
             info.text    = L.LEDGER_FILTER_ALL
             info.checked = (ledgerCharFilter == nil)
             info.func    = function()
                 ledgerCharFilter = nil
-                UIDropDownMenu_SetText(ledgerFilterDropdown, L.LEDGER_FILTER_ALL)
+                DD.SetText(ledgerFilterDropdown, L.LEDGER_FILTER_ALL)
                 UI:RefreshLedger()
             end
-            UIDropDownMenu_AddButton(info)
+            DD.AddButton(info)
 
             local Data = WarbandAccountant.Data
             local chars = {}
@@ -824,16 +809,16 @@ local function BuildLedgerTab(panel)
             table.sort(chars, function(a,b) return a.name < b.name end)
             for _, c in ipairs(chars) do
                 local disp = c.name .. (c.realm ~= GetRealmName() and L.OTHER_REALM_SUFFIX or "")
-                info = UIDropDownMenu_CreateInfo()
+                info = DD.CreateInfo()
                 info.text    = disp
                 info.arg1    = c.id
                 info.checked = (ledgerCharFilter == c.id)
                 info.func    = function(btn, arg1)
                     ledgerCharFilter = arg1
-                    UIDropDownMenu_SetText(ledgerFilterDropdown, btn:GetText())
+                    DD.SetText(ledgerFilterDropdown, btn:GetText())
                     UI:RefreshLedger()
                 end
-                UIDropDownMenu_AddButton(info)
+                DD.AddButton(info)
             end
         end)
     end
@@ -998,15 +983,9 @@ local function BuildSettingsTab(outerPanel)
 
     -- Helper: section box
     local function Section(title, sx, sy, sw, sh)
-        local box = CreateFrame("Frame", nil, panel, "BackdropTemplate")
+        local box = CreateFrame("Frame", nil, panel, "TooltipBackdropTemplate")
         box:SetSize(sw, sh)
         box:SetPoint("TOPLEFT", sx, sy)
-        box:SetBackdrop({
-            bgFile   = "Interface\\DialogFrame\\UI-DialogBox-Background-Dark",
-            edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
-            tile=true, tileSize=16, edgeSize=12,
-            insets={ left=3, right=3, top=3, bottom=3 }
-        })
         box:SetBackdropColor(0.06, 0.05, 0.03, 0.95)
         box:SetBackdropBorderColor(0.35, 0.30, 0.15, 0.7)
         local hdr = box:CreateFontString(nil, "OVERLAY", "GameFontNormal")
@@ -1067,37 +1046,37 @@ local function BuildSettingsTab(outerPanel)
     homeLbl:SetText(L.SETTINGS_HOMEGUILD_LABEL)
     homeLbl:SetTextColor(COLOR_GREY.r, COLOR_GREY.g, COLOR_GREY.b)
 
-    local homeDD = CreateFrame("Frame", "WBAHomeGuildDD", guildBox, "UIDropDownMenuTemplate")
+    local homeDD = DD.Create("WBAHomeGuildDD", guildBox)
     homeDD:SetPoint("LEFT", homeLbl, "RIGHT", 0, -2)
-    UIDropDownMenu_SetWidth(homeDD, 190)
+    DD.SetWidth(homeDD, 190)
 
     local function HomeGuildDisplayText()
         return Data:GetHomeGuild() or L.SETTINGS_HOMEGUILD_CURRENT
     end
-    UIDropDownMenu_SetText(homeDD, HomeGuildDisplayText())
+    DD.SetText(homeDD, HomeGuildDisplayText())
 
-    UIDropDownMenu_Initialize(homeDD, function()
-        local info = UIDropDownMenu_CreateInfo()
+    DD.Initialize(homeDD, function()
+        local info = DD.CreateInfo()
         info.text = L.SETTINGS_HOMEGUILD_CURRENT
         info.checked = (Data:GetHomeGuild() == nil)
         info.func = function(btn)
             Data:SetHomeGuild(nil)
-            UIDropDownMenu_SetText(homeDD, L.SETTINGS_HOMEGUILD_CURRENT)
+            DD.SetText(homeDD, L.SETTINGS_HOMEGUILD_CURRENT)
             if activeTab == "overview" then UI:RefreshOverview() end
         end
-        UIDropDownMenu_AddButton(info)
+        DD.AddButton(info)
 
         for _, name in ipairs(Data:GetKnownGuildNames()) do
-            info = UIDropDownMenu_CreateInfo()
+            info = DD.CreateInfo()
             info.text = name
             info.arg1 = name
             info.checked = (Data:GetHomeGuild() == name)
             info.func = function(btn, arg1)
                 Data:SetHomeGuild(arg1)
-                UIDropDownMenu_SetText(homeDD, arg1)
+                DD.SetText(homeDD, arg1)
                 if activeTab == "overview" then UI:RefreshOverview() end
             end
-            UIDropDownMenu_AddButton(info)
+            DD.AddButton(info)
         end
     end)
 
@@ -1132,16 +1111,13 @@ local function BuildSettingsTab(outerPanel)
     local keys = Data:GetAllCategoryKeys()
 
     local function MakeCategoryRow(parent, key, col, rowIdx)
-        local bx = col == 0 and 10 or (10 + colW)
+        -- typed names line up with the Name header (header x - TB.PAD)
+        local bx = col == 0 and 8 or (8 + colW)
         local by = -50 - (rowIdx * rowH)
 
-        local nameEB = CreateFrame("EditBox", nil, parent, "InputBoxTemplate")
-        nameEB:SetSize(130, 22)
+        local nameEB = TB.Create(parent, 130, 22, { maxLetters = 20 })
         nameEB:SetPoint("TOPLEFT", bx, by)
-        nameEB:SetAutoFocus(false)
-        nameEB:SetMaxLetters(20)
         nameEB:SetText(Data:GetCategoryName(key))
-        nameEB:SetTextInsets(4, 4, 0, 0)
         local function SaveName(self)
             local v = self:GetText()
             if v == "" then v = key; self:SetText(v) end
@@ -1150,17 +1126,11 @@ local function BuildSettingsTab(outerPanel)
         nameEB:SetScript("OnEnterPressed", function(self) self:ClearFocus(); SaveName(self) end)
         nameEB:SetScript("OnEditFocusLost", SaveName)
 
-        local goldEB = CreateFrame("EditBox", nil, parent, "InputBoxTemplate")
-        goldEB:SetSize(80, 22)
+        local goldEB = TB.Create(parent, 80, 22, { numeric = true, maxLetters = 7, justify = "RIGHT" })
         goldEB:SetPoint("LEFT", nameEB, "RIGHT", 8, 0)
-        goldEB:SetAutoFocus(false)
-        goldEB:SetNumeric(true)
-        goldEB:SetMaxLetters(7)
-        goldEB:SetJustifyH("RIGHT")
-        goldEB:SetTextInsets(2, 6, 0, 0)
         goldEB:SetText(tostring(math.floor((Data:GetDefaultTarget(key) or 0) / 10000)))
         local gLbl = parent:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-        gLbl:SetPoint("LEFT", goldEB, "RIGHT", 2, 0)
+        gLbl:SetPoint("LEFT", goldEB, "RIGHT", 4, 0)
         gLbl:SetText(L.GOLD_SUFFIX)
         gLbl:SetTextColor(COLOR_GOLD.r, COLOR_GOLD.g, COLOR_GOLD.b)
         local goldSaved = false
@@ -1220,28 +1190,28 @@ local function BuildSettingsTab(outerPanel)
     sortLbl:SetText(L.SETTINGS_SORT_MODE)
     sortLbl:SetTextColor(COLOR_GREY.r, COLOR_GREY.g, COLOR_GREY.b)
 
-    local sortDD = CreateFrame("Frame", "WBASortDD", dispBox, "UIDropDownMenuTemplate")
+    local sortDD = DD.Create("WBASortDD", dispBox)
     sortDD:SetPoint("LEFT", sortLbl, "RIGHT", 4, 0)
-    UIDropDownMenu_SetWidth(sortDD, 120)
+    DD.SetWidth(sortDD, 120)
     local curSort = Data:GetSortMode()
-    UIDropDownMenu_SetText(sortDD, curSort == "arrow" and L.SETTINGS_SORT_ARROW or L.SETTINGS_SORT_NUMBER)
-    UIDropDownMenu_Initialize(sortDD, function()
-        local info = UIDropDownMenu_CreateInfo()
+    DD.SetText(sortDD, curSort == "arrow" and L.SETTINGS_SORT_ARROW or L.SETTINGS_SORT_NUMBER)
+    DD.Initialize(sortDD, function()
+        local info = DD.CreateInfo()
         info.func = function(btn, arg1)
-            UIDropDownMenu_SetText(sortDD, btn:GetText())
+            DD.SetText(sortDD, btn:GetText())
             Data:SetSortMode(arg1)
             if activeTab == "targets" then UI:RefreshTargets() end
         end
         info.text = L.SETTINGS_SORT_ARROW; info.arg1 = "arrow"; info.checked = Data:GetSortMode() == "arrow"
-        UIDropDownMenu_AddButton(info)
-        info = UIDropDownMenu_CreateInfo()
+        DD.AddButton(info)
+        info = DD.CreateInfo()
         info.func = function(btn, arg1)
-            UIDropDownMenu_SetText(sortDD, btn:GetText())
+            DD.SetText(sortDD, btn:GetText())
             Data:SetSortMode(arg1)
             if activeTab == "targets" then UI:RefreshTargets() end
         end
         info.text = L.SETTINGS_SORT_NUMBER; info.arg1 = "number"; info.checked = Data:GetSortMode() == "number"
-        UIDropDownMenu_AddButton(info)
+        DD.AddButton(info)
     end)
 
     -- Minimap show/hide dropdown (col 2, row 1)
@@ -1250,29 +1220,29 @@ local function BuildSettingsTab(outerPanel)
     mmLbl:SetText(L.SETTINGS_MINIMAP_BUTTON)
     mmLbl:SetTextColor(COLOR_GREY.r, COLOR_GREY.g, COLOR_GREY.b)
 
-    local mmDD = CreateFrame("Frame", "WBAMinimapDD", dispBox, "UIDropDownMenuTemplate")
+    local mmDD = DD.Create("WBAMinimapDD", dispBox)
     mmDD:SetPoint("LEFT", mmLbl, "RIGHT", 4, 0)
-    UIDropDownMenu_SetWidth(mmDD, 70)
-    UIDropDownMenu_SetText(mmDD, settings.hide and L.SETTINGS_NO or L.SETTINGS_YES)
-    UIDropDownMenu_Initialize(mmDD, function()
-        local info = UIDropDownMenu_CreateInfo()
+    DD.SetWidth(mmDD, 70)
+    DD.SetText(mmDD, settings.hide and L.SETTINGS_NO or L.SETTINGS_YES)
+    DD.Initialize(mmDD, function()
+        local info = DD.CreateInfo()
         info.text = L.SETTINGS_YES; info.arg1 = false
         info.checked = not settings.hide
         info.func = function(btn, arg1)
             settings.hide = arg1
-            UIDropDownMenu_SetText(mmDD, L.SETTINGS_YES)
+            DD.SetText(mmDD, L.SETTINGS_YES)
             UI:ToggleMinimapButton()
         end
-        UIDropDownMenu_AddButton(info)
-        info = UIDropDownMenu_CreateInfo()
+        DD.AddButton(info)
+        info = DD.CreateInfo()
         info.text = L.SETTINGS_NO; info.arg1 = true
         info.checked = settings.hide
         info.func = function(btn, arg1)
             settings.hide = arg1
-            UIDropDownMenu_SetText(mmDD, L.SETTINGS_NO)
+            DD.SetText(mmDD, L.SETTINGS_NO)
             UI:ToggleMinimapButton()
         end
-        UIDropDownMenu_AddButton(info)
+        DD.AddButton(info)
     end)
 
     -- UI Scale row (col 3, row 1)
@@ -1281,24 +1251,24 @@ local function BuildSettingsTab(outerPanel)
     scaleLbl:SetText(L.SETTINGS_UI_SCALE)
     scaleLbl:SetTextColor(COLOR_GREY.r, COLOR_GREY.g, COLOR_GREY.b)
 
-    local scaleDD = CreateFrame("Frame", "WBAScaleDD", dispBox, "UIDropDownMenuTemplate")
+    local scaleDD = DD.Create("WBAScaleDD", dispBox)
     scaleDD:SetPoint("LEFT", scaleLbl, "RIGHT", 4, 0)
-    UIDropDownMenu_SetWidth(scaleDD, 90)
-    UIDropDownMenu_SetText(scaleDD, Data:GetUIScale() .. "%")
-    UIDropDownMenu_Initialize(scaleDD, function()
+    DD.SetWidth(scaleDD, 90)
+    DD.SetText(scaleDD, Data:GetUIScale() .. "%")
+    DD.Initialize(scaleDD, function()
         for pct = 50, 300, 10 do
-            local info = UIDropDownMenu_CreateInfo()
+            local info = DD.CreateInfo()
             info.text = pct .. "%"
             info.arg1 = pct
             info.checked = (Data:GetUIScale() == pct)
             info.func = function(btn, arg1)
                 Data:SetUIScale(arg1)
-                UIDropDownMenu_SetText(scaleDD, arg1 .. "%")
+                DD.SetText(scaleDD, arg1 .. "%")
                 if mainFrame then
                     mainFrame:SetScale(arg1 / 100)
                 end
             end
-            UIDropDownMenu_AddButton(info)
+            DD.AddButton(info)
         end
     end)
 
@@ -1315,23 +1285,23 @@ local function BuildSettingsTab(outerPanel)
         return code
     end
 
-    local langDD = CreateFrame("Frame", "WBALanguageDD", dispBox, "UIDropDownMenuTemplate")
+    local langDD = DD.Create("WBALanguageDD", dispBox)
     langDD:SetPoint("LEFT", langLbl, "RIGHT", 4, 0)
-    UIDropDownMenu_SetWidth(langDD, 100)
-    UIDropDownMenu_SetText(langDD, LocaleDisplayName(Data:GetLanguage()))
-    UIDropDownMenu_Initialize(langDD, function()
+    DD.SetWidth(langDD, 100)
+    DD.SetText(langDD, LocaleDisplayName(Data:GetLanguage()))
+    DD.Initialize(langDD, function()
         for _, entry in ipairs(WarbandAccountant.SUPPORTED_LOCALES) do
-            local info = UIDropDownMenu_CreateInfo()
+            local info = DD.CreateInfo()
             info.text = entry.name
             info.arg1 = entry.code
             info.checked = (Data:GetLanguage() == entry.code)
             info.func = function(btn, arg1)
                 if arg1 == Data:GetLanguage() then return end
                 Data:SetLanguage(arg1)
-                UIDropDownMenu_SetText(langDD, btn:GetText())
+                DD.SetText(langDD, btn:GetText())
                 StaticPopup_Show("WARBANDACCOUNTANT_RELOAD_UI")
             end
-            UIDropDownMenu_AddButton(info)
+            DD.AddButton(info)
         end
     end)
 
@@ -1365,24 +1335,24 @@ local function BuildSettingsTab(outerPanel)
         return L.SETTINGS_THOUSANDS_NONE
     end
 
-    local sepDD = CreateFrame("Frame", "WBASepDD", dispBox, "UIDropDownMenuTemplate")
+    local sepDD = DD.Create("WBASepDD", dispBox)
     sepDD:SetPoint("LEFT", sepLbl, "RIGHT", 4, 0)
-    UIDropDownMenu_SetWidth(sepDD, 80)
-    UIDropDownMenu_SetText(sepDD, SepDisplayLabel(Data:GetThousandsSeparator()))
-    UIDropDownMenu_Initialize(sepDD, function()
+    DD.SetWidth(sepDD, 80)
+    DD.SetText(sepDD, SepDisplayLabel(Data:GetThousandsSeparator()))
+    DD.Initialize(sepDD, function()
         for _, opt in ipairs(SEP_OPTIONS) do
-            local info = UIDropDownMenu_CreateInfo()
+            local info = DD.CreateInfo()
             info.text = opt.label
             info.arg1 = opt.value
             info.checked = (Data:GetThousandsSeparator() == opt.value)
             info.func = function(btn, arg1)
                 Data:SetThousandsSeparator(arg1)
-                UIDropDownMenu_SetText(sepDD, btn:GetText())
+                DD.SetText(sepDD, btn:GetText())
                 if activeTab == "overview" then UI:RefreshOverview() end
                 if activeTab == "targets" then UI:RefreshTargets() end
                 if activeTab == "ledger" then UI:RefreshLedger() end
             end
-            UIDropDownMenu_AddButton(info)
+            DD.AddButton(info)
         end
     end)
 
@@ -1392,27 +1362,27 @@ local function BuildSettingsTab(outerPanel)
     changelogLbl:SetText(L.SETTINGS_SHOW_STARTUP_MSG)
     changelogLbl:SetTextColor(COLOR_GREY.r, COLOR_GREY.g, COLOR_GREY.b)
 
-    local changelogDD = CreateFrame("Frame", "WBAChangelogDD", dispBox, "UIDropDownMenuTemplate")
+    local changelogDD = DD.Create("WBAChangelogDD", dispBox)
     changelogDD:SetPoint("LEFT", changelogLbl, "RIGHT", 4, 0)
-    UIDropDownMenu_SetWidth(changelogDD, 70)
-    UIDropDownMenu_SetText(changelogDD, Data:GetShowUpdateChangelog() and L.SETTINGS_YES or L.SETTINGS_NO)
-    UIDropDownMenu_Initialize(changelogDD, function()
-        local info = UIDropDownMenu_CreateInfo()
+    DD.SetWidth(changelogDD, 70)
+    DD.SetText(changelogDD, Data:GetShowUpdateChangelog() and L.SETTINGS_YES or L.SETTINGS_NO)
+    DD.Initialize(changelogDD, function()
+        local info = DD.CreateInfo()
         info.text = L.SETTINGS_YES; info.arg1 = true
         info.checked = Data:GetShowUpdateChangelog()
         info.func = function(btn, arg1)
             Data:SetShowUpdateChangelog(arg1)
-            UIDropDownMenu_SetText(changelogDD, L.SETTINGS_YES)
+            DD.SetText(changelogDD, L.SETTINGS_YES)
         end
-        UIDropDownMenu_AddButton(info)
-        info = UIDropDownMenu_CreateInfo()
+        DD.AddButton(info)
+        info = DD.CreateInfo()
         info.text = L.SETTINGS_NO; info.arg1 = false
         info.checked = not Data:GetShowUpdateChangelog()
         info.func = function(btn, arg1)
             Data:SetShowUpdateChangelog(arg1)
-            UIDropDownMenu_SetText(changelogDD, L.SETTINGS_NO)
+            DD.SetText(changelogDD, L.SETTINGS_NO)
         end
-        UIDropDownMenu_AddButton(info)
+        DD.AddButton(info)
     end)
 
     StaticPopupDialogs["WARBANDACCOUNTANT_RELOAD_UI"] = {
@@ -1444,21 +1414,12 @@ local function BuildSettingsTab(outerPanel)
         local FIELD_X = 120
 
         Label(L.SETTINGS_GOAL_NAME, -36)
-        local nameEB = CreateFrame("EditBox", nil, goalBox, "InputBoxTemplate")
-        nameEB:SetSize(200, 22)
+        local nameEB = TB.Create(goalBox, 200, 22, { maxLetters = 30 })
         nameEB:SetPoint("TOPLEFT", FIELD_X, -30)
-        nameEB:SetAutoFocus(false)
-        nameEB:SetMaxLetters(30)
 
         Label(L.SETTINGS_GOAL_AMOUNT, -68)
-        local amountEB = CreateFrame("EditBox", nil, goalBox, "InputBoxTemplate")
-        amountEB:SetSize(110, 22)
+        local amountEB = TB.Create(goalBox, 110, 22, { numeric = true, maxLetters = 8, justify = "RIGHT" })
         amountEB:SetPoint("TOPLEFT", FIELD_X, -62)
-        amountEB:SetAutoFocus(false)
-        amountEB:SetNumeric(true)
-        amountEB:SetMaxLetters(8)
-        amountEB:SetJustifyH("RIGHT")
-        amountEB:SetTextInsets(2, 6, 0, 0)
 
         local gLbl = goalBox:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
         gLbl:SetPoint("LEFT", amountEB, "RIGHT", 4, 0)
@@ -1505,6 +1466,8 @@ local function BuildSettingsTab(outerPanel)
             if n and n > 0 then
                 Goals:UpdateGoal({ name = CurrentName(), amount = n * 10000, useToken = false })
                 nameEB:SetText(CurrentName())
+                -- A new goal unlocks the End Date dropdowns right away
+                if RefreshDateDDs then RefreshDateDDs() end
             elseif goal then
                 -- Clearing the amount turns the goal off
                 Goals:ClearGoal()
@@ -1536,22 +1499,22 @@ local function BuildSettingsTab(outerPanel)
 
         -- Days / Weeks for the finish estimate
         Label(L.SETTINGS_GOAL_ETA_UNIT, -136)
-        local unitDD = CreateFrame("Frame", "WBAGoalETAUnitDD", goalBox, "UIDropDownMenuTemplate")
+        local unitDD = DD.Create("WBAGoalETAUnitDD", goalBox)
         unitDD:SetPoint("TOPLEFT", FIELD_X - 18, -128)
-        UIDropDownMenu_SetWidth(unitDD, 90)
+        DD.SetWidth(unitDD, 90)
         local function UnitText(u) return u == "weeks" and L.SETTINGS_GOAL_ETA_WEEKS or L.SETTINGS_GOAL_ETA_DAYS end
-        UIDropDownMenu_SetText(unitDD, UnitText(Goals and Goals:GetETAUnit() or "days"))
-        UIDropDownMenu_Initialize(unitDD, function()
+        DD.SetText(unitDD, UnitText(Goals and Goals:GetETAUnit() or "days"))
+        DD.Initialize(unitDD, function()
             for _, u in ipairs({ "days", "weeks" }) do
-                local info = UIDropDownMenu_CreateInfo()
+                local info = DD.CreateInfo()
                 info.text    = UnitText(u)
                 info.arg1    = u
                 info.checked = Goals and Goals:GetETAUnit() == u
                 info.func    = function(_, arg1)
                     if Goals then Goals:SetETAUnit(arg1) end
-                    UIDropDownMenu_SetText(unitDD, UnitText(arg1))
+                    DD.SetText(unitDD, UnitText(arg1))
                 end
-                UIDropDownMenu_AddButton(info)
+                DD.AddButton(info)
             end
         end)
 
@@ -1584,8 +1547,8 @@ local function BuildSettingsTab(outerPanel)
             local y, m, d = GoalDateParts()
             local values = { Y = y, M = m, D = d }
             for part, dd in pairs(dateDDs) do
-                UIDropDownMenu_SetText(dd, values[part] and tostring(values[part]) or L["SETTINGS_GOAL_DATE_" .. part])
-                if hasGoal then UIDropDownMenu_EnableDropDown(dd) else UIDropDownMenu_DisableDropDown(dd) end
+                DD.SetText(dd, values[part] and tostring(values[part]) or L["SETTINGS_GOAL_DATE_" .. part])
+                if hasGoal then DD.SetEnabled(dd, true) else DD.SetEnabled(dd, false) end
             end
         end
 
@@ -1593,10 +1556,10 @@ local function BuildSettingsTab(outerPanel)
         local dx = FIELD_X - 18
         for i = 1, #order do
             local part = order:sub(i, i)
-            local dd = CreateFrame("Frame", "WBAGoalDate" .. part .. "DD", goalBox, "UIDropDownMenuTemplate")
+            local dd = DD.Create("WBAGoalDate" .. part .. "DD", goalBox)
             dd:SetPoint("TOPLEFT", dx, -164)
-            UIDropDownMenu_SetWidth(dd, part == "Y" and 56 or 40)
-            UIDropDownMenu_Initialize(dd, function()
+            DD.SetWidth(dd, part == "Y" and 56 or 40)
+            DD.Initialize(dd, function()
                 local now = date("*t", time())
                 local y, m, d = GoalDateParts()
                 local current = ({ Y = y, M = m, D = d })[part]
@@ -1609,12 +1572,12 @@ local function BuildSettingsTab(outerPanel)
                     first, last = math.min(now.year, y or now.year), now.year + 5
                 end
                 for v = first, last do
-                    local info = UIDropDownMenu_CreateInfo()
+                    local info = DD.CreateInfo()
                     info.text    = tostring(v)
                     info.arg1    = v
                     info.checked = (current == v)
                     info.func    = function(_, arg1) PickDatePart(part, arg1) end
-                    UIDropDownMenu_AddButton(info)
+                    DD.AddButton(info)
                 end
             end)
             dateDDs[part] = dd
@@ -1659,28 +1622,28 @@ local function BuildSettingsTab(outerPanel)
         freqLbl:SetText(L.SETTINGS_TOKEN_FREQ)
         freqLbl:SetTextColor(COLOR_GREY.r, COLOR_GREY.g, COLOR_GREY.b)
 
-        local freqDD = CreateFrame("Frame", "WBATokenFreqDD", tokenBox, "UIDropDownMenuTemplate")
+        local freqDD = DD.Create("WBATokenFreqDD", tokenBox)
         freqDD:SetPoint("LEFT", freqLbl, "RIGHT", 0, -2)
-        UIDropDownMenu_SetWidth(freqDD, 110)
+        DD.SetWidth(freqDD, 110)
         local function FreqText(v)
             for _, opt in ipairs(Token.FREQUENCY_OPTIONS) do
                 if opt.value == v then return string.format(L.SETTINGS_TOKEN_MINUTES_FORMAT, opt.minutes) end
             end
             return string.format(L.SETTINGS_TOKEN_MINUTES_FORMAT, 5)
         end
-        UIDropDownMenu_SetText(freqDD, FreqText(tokenSettings.updateInterval))
-        UIDropDownMenu_Initialize(freqDD, function()
+        DD.SetText(freqDD, FreqText(tokenSettings.updateInterval))
+        DD.Initialize(freqDD, function()
             for _, opt in ipairs(Token.FREQUENCY_OPTIONS) do
-                local info = UIDropDownMenu_CreateInfo()
+                local info = DD.CreateInfo()
                 info.text = string.format(L.SETTINGS_TOKEN_MINUTES_FORMAT, opt.minutes)
                 info.arg1 = opt.value
                 info.checked = (tokenSettings.updateInterval == opt.value)
                 info.func = function(btn, arg1)
                     tokenSettings.updateInterval = arg1
-                    UIDropDownMenu_SetText(freqDD, btn:GetText())
+                    DD.SetText(freqDD, btn:GetText())
                     Token:RestartTicker()
                 end
-                UIDropDownMenu_AddButton(info)
+                DD.AddButton(info)
             end
         end)
 
@@ -1690,27 +1653,27 @@ local function BuildSettingsTab(outerPanel)
         showLbl:SetText(L.SETTINGS_TOKEN_FLOATING)
         showLbl:SetTextColor(COLOR_GREY.r, COLOR_GREY.g, COLOR_GREY.b)
 
-        local showDD = CreateFrame("Frame", "WBATokenShowDD", tokenBox, "UIDropDownMenuTemplate")
+        local showDD = DD.Create("WBATokenShowDD", tokenBox)
         showDD:SetPoint("LEFT", showLbl, "RIGHT", 0, -2)
-        UIDropDownMenu_SetWidth(showDD, 70)
-        UIDropDownMenu_SetText(showDD, tokenSettings.showFloatingFrame ~= false and L.SETTINGS_YES or L.SETTINGS_NO)
-        UIDropDownMenu_Initialize(showDD, function()
-            local info = UIDropDownMenu_CreateInfo()
+        DD.SetWidth(showDD, 70)
+        DD.SetText(showDD, tokenSettings.showFloatingFrame ~= false and L.SETTINGS_YES or L.SETTINGS_NO)
+        DD.Initialize(showDD, function()
+            local info = DD.CreateInfo()
             info.text = L.SETTINGS_YES; info.arg1 = true
             info.checked = tokenSettings.showFloatingFrame ~= false
             info.func = function(btn, arg1)
                 Token:SetShowFloatingFrame(arg1)
-                UIDropDownMenu_SetText(showDD, L.SETTINGS_YES)
+                DD.SetText(showDD, L.SETTINGS_YES)
             end
-            UIDropDownMenu_AddButton(info)
-            info = UIDropDownMenu_CreateInfo()
+            DD.AddButton(info)
+            info = DD.CreateInfo()
             info.text = L.SETTINGS_NO; info.arg1 = false
             info.checked = tokenSettings.showFloatingFrame == false
             info.func = function(btn, arg1)
                 Token:SetShowFloatingFrame(arg1)
-                UIDropDownMenu_SetText(showDD, L.SETTINGS_NO)
+                DD.SetText(showDD, L.SETTINGS_NO)
             end
-            UIDropDownMenu_AddButton(info)
+            DD.AddButton(info)
         end)
 
         -- Display checkboxes, one per row
@@ -1748,11 +1711,8 @@ local function BuildSettingsTab(outerPanel)
         lowLbl:SetText(L.SETTINGS_TOKEN_LOW)
         lowLbl:SetTextColor(COLOR_WHITE.r, COLOR_WHITE.g, COLOR_WHITE.b)
 
-        local lowEB = CreateFrame("EditBox", nil, tokenBox, "InputBoxTemplate")
-        lowEB:SetSize(80, 22)
-        lowEB:SetPoint("LEFT", lowLbl, "RIGHT", 8, 0)
-        lowEB:SetAutoFocus(false)
-        lowEB:SetNumeric(true)
+        local lowEB = TB.Create(tokenBox, 80, 22, { numeric = true })
+        lowEB:SetPoint("LEFT", lowLbl, "RIGHT", 6, 0)
         lowEB:SetText(tokenSettings.alertLowThreshold and tostring(tokenSettings.alertLowThreshold) or "")
         local function SaveLow(self)
             local n = tonumber(self:GetText())
@@ -1766,11 +1726,8 @@ local function BuildSettingsTab(outerPanel)
         highLbl:SetText(L.SETTINGS_TOKEN_HIGH)
         highLbl:SetTextColor(COLOR_WHITE.r, COLOR_WHITE.g, COLOR_WHITE.b)
 
-        local highEB = CreateFrame("EditBox", nil, tokenBox, "InputBoxTemplate")
-        highEB:SetSize(80, 22)
-        highEB:SetPoint("LEFT", highLbl, "RIGHT", 8, 0)
-        highEB:SetAutoFocus(false)
-        highEB:SetNumeric(true)
+        local highEB = TB.Create(tokenBox, 80, 22, { numeric = true })
+        highEB:SetPoint("LEFT", highLbl, "RIGHT", 6, 0)
         highEB:SetText(tokenSettings.alertHighThreshold and tostring(tokenSettings.alertHighThreshold) or "")
         local function SaveHigh(self)
             local n = tonumber(self:GetText())
@@ -1886,8 +1843,9 @@ local function BuildSettingsTab(outerPanel)
         timeout = 0, whileDead = true, hideOnEscape = true,
     }
 
-    -- Grow the scroll content to fit everything (resetY is negative, resetBox height is 150)
-    panel:SetHeight(math.abs(resetY) + 150 + 20)
+    -- Grow the scroll content to fit everything (resetY is negative). Use the
+    -- Danger Zone box's real height so the last box is never cut off.
+    panel:SetHeight(math.abs(resetY) + resetBox:GetHeight() + 20)
 end
 
 -- ===============================================================================
@@ -1949,8 +1907,8 @@ end
 
 local function CreateRangeDropdown(panel, frameName, options, onPick)
     local L = WarbandAccountant.L
-    local dd = CreateFrame("Frame", frameName, panel, "UIDropDownMenuTemplate")
-    UIDropDownMenu_SetWidth(dd, 90)
+    local dd = DD.Create(frameName, panel)
+    DD.SetWidth(dd, 90)
 
     local lbl = panel:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     lbl:SetPoint("RIGHT", dd, "LEFT", 16, 1)
@@ -1960,12 +1918,12 @@ local function CreateRangeDropdown(panel, frameName, options, onPick)
 
     function dd:SetRange(key)
         self.current = key
-        UIDropDownMenu_SetText(self, RangeText(key))
+        DD.SetText(self, RangeText(key))
     end
 
-    UIDropDownMenu_Initialize(dd, function()
+    DD.Initialize(dd, function()
         for _, key in ipairs(options) do
-            local info = UIDropDownMenu_CreateInfo()
+            local info = DD.CreateInfo()
             info.text    = RangeText(key)
             info.arg1    = key
             info.checked = (dd.current == key)
@@ -1973,7 +1931,7 @@ local function CreateRangeDropdown(panel, frameName, options, onPick)
                 dd:SetRange(arg1)
                 onPick(arg1)
             end
-            UIDropDownMenu_AddButton(info)
+            DD.AddButton(info)
         end
     end)
     return dd
@@ -2056,10 +2014,10 @@ local function BuildGoldHistoryTab(panel)
     goldHistCurrentLabel:SetJustifyH("LEFT")
 
     -- Character filter, top-right (same pattern as the Ledger tab)
-    goldHistFilterDropdown = CreateFrame("Frame", "WBAGoldHistFilterDD", panel, "UIDropDownMenuTemplate")
+    goldHistFilterDropdown = DD.Create("WBAGoldHistFilterDD", panel)
     goldHistFilterDropdown:SetPoint("TOPRIGHT", panel, "TOPRIGHT", 8, -2)
-    UIDropDownMenu_SetWidth(goldHistFilterDropdown, 170)
-    UIDropDownMenu_SetText(goldHistFilterDropdown, L.GOLDHIST_FILTER_WARBAND)
+    DD.SetWidth(goldHistFilterDropdown, 170)
+    DD.SetText(goldHistFilterDropdown, L.GOLDHIST_FILTER_WARBAND)
 
     local filterLbl = panel:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     filterLbl:SetPoint("RIGHT", goldHistFilterDropdown, "LEFT", 16, 1)
@@ -2075,27 +2033,27 @@ local function BuildGoldHistoryTab(panel)
     goldHistRangeDD:SetRange(GOLDHIST_DEFAULT_RANGE)
 
     local function InitGoldHistFilter()
-        UIDropDownMenu_Initialize(goldHistFilterDropdown, function()
-            local info = UIDropDownMenu_CreateInfo()
+        DD.Initialize(goldHistFilterDropdown, function()
+            local info = DD.CreateInfo()
             info.text    = L.GOLDHIST_FILTER_WARBAND
             info.checked = (goldHistCharFilter == nil)
             info.func    = function()
                 goldHistCharFilter = nil
-                UIDropDownMenu_SetText(goldHistFilterDropdown, L.GOLDHIST_FILTER_WARBAND)
+                DD.SetText(goldHistFilterDropdown, L.GOLDHIST_FILTER_WARBAND)
                 UI:RefreshGoldHistory()
             end
-            UIDropDownMenu_AddButton(info)
+            DD.AddButton(info)
 
             local ACCOUNT_TOTAL_KEY = WarbandAccountant.ACCOUNT_TOTAL_KEY
-            info = UIDropDownMenu_CreateInfo()
+            info = DD.CreateInfo()
             info.text    = L.GOLDHIST_FILTER_ACCOUNT
             info.checked = (goldHistCharFilter == ACCOUNT_TOTAL_KEY)
             info.func    = function()
                 goldHistCharFilter = ACCOUNT_TOTAL_KEY
-                UIDropDownMenu_SetText(goldHistFilterDropdown, L.GOLDHIST_FILTER_ACCOUNT)
+                DD.SetText(goldHistFilterDropdown, L.GOLDHIST_FILTER_ACCOUNT)
                 UI:RefreshGoldHistory()
             end
-            UIDropDownMenu_AddButton(info)
+            DD.AddButton(info)
 
             local Data = WarbandAccountant.Data
             local chars = {}
@@ -2105,16 +2063,16 @@ local function BuildGoldHistoryTab(panel)
             table.sort(chars, function(a,b) return a.name < b.name end)
             for _, c in ipairs(chars) do
                 local disp = c.name .. (c.realm ~= GetRealmName() and L.OTHER_REALM_SUFFIX or "")
-                info = UIDropDownMenu_CreateInfo()
+                info = DD.CreateInfo()
                 info.text    = disp
                 info.arg1    = c.id
                 info.checked = (goldHistCharFilter == c.id)
                 info.func    = function(btn, arg1)
                     goldHistCharFilter = arg1
-                    UIDropDownMenu_SetText(goldHistFilterDropdown, btn:GetText())
+                    DD.SetText(goldHistFilterDropdown, btn:GetText())
                     UI:RefreshGoldHistory()
                 end
-                UIDropDownMenu_AddButton(info)
+                DD.AddButton(info)
             end
         end)
     end
@@ -2295,15 +2253,9 @@ local function BuildGoalsTab(panel)
     sep:SetPoint("TOPRIGHT", panel, "TOPRIGHT", -2, -32)
 
     -- Goal card
-    local card = CreateFrame("Frame", nil, panel, "BackdropTemplate")
+    local card = CreateFrame("Frame", nil, panel, "TooltipBackdropTemplate")
     card:SetPoint("TOPLEFT", 6, -42)
     card:SetSize(CONTENT_W - 16, 122)
-    card:SetBackdrop({
-        bgFile   = "Interface\\DialogFrame\\UI-DialogBox-Background-Dark",
-        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
-        tile = true, tileSize = 16, edgeSize = 12,
-        insets = { left=3, right=3, top=3, bottom=3 }
-    })
     card:SetBackdropColor(0.08, 0.07, 0.04, 0.95)
     card:SetBackdropBorderColor(0.35, 0.30, 0.15, 0.8)
 
@@ -2885,19 +2837,16 @@ local function BuildSupportTab(panel)
     local textX = 300 -- fixed so both rows' description/URL line up regardless of logo width
 
     local function LinkRow(desc, url, yOff, iconTexture, iconWidth, iconHeight)
-        local box = CreateFrame("Frame", nil, panel, "BackdropTemplate")
+        local box = CreateFrame("Frame", nil, panel, "TooltipBackdropTemplate")
         box:SetSize(CONTENT_W - 20, 78)
         box:SetPoint("TOPLEFT", 6, yOff)
-        box:SetBackdrop({
-            bgFile   = "Interface\\DialogFrame\\UI-DialogBox-Background-Dark",
-            edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
-            tile=true, tileSize=16, edgeSize=12,
-            insets={ left=3, right=3, top=3, bottom=3 }
-        })
         box:SetBackdropColor(0.06, 0.05, 0.03, 0.95)
         box:SetBackdropBorderColor(0.35, 0.30, 0.15, 0.7)
 
-        local icon = box:CreateTexture(nil, "ARTWORK")
+        -- Icon on its own child frame so it draws above the box border
+        local iconHolder = CreateFrame("Frame", nil, box)
+        iconHolder:SetAllPoints(box)
+        local icon = iconHolder:CreateTexture(nil, "ARTWORK")
         icon:SetSize(iconWidth, iconHeight)
         icon:SetPoint("LEFT", 20, 0)
         icon:SetTexture(iconTexture)
@@ -2909,10 +2858,8 @@ local function BuildSupportTab(panel)
         descFs:SetText(desc)
         descFs:SetTextColor(COLOR_GREY.r, COLOR_GREY.g, COLOR_GREY.b)
 
-        local eb = CreateFrame("EditBox", nil, box, "InputBoxTemplate")
-        eb:SetSize(CONTENT_W - 60 - textX - 130, 22)
-        eb:SetPoint("TOPLEFT", textX + 4, -50)
-        eb:SetAutoFocus(false)
+        local eb = TB.Create(box, CONTENT_W - 60 - textX - 130, 22)
+        eb:SetPoint("TOPLEFT", textX, -50)
         eb:SetText(url)
         eb:SetCursorPosition(0)
         eb:SetScript("OnEditFocusGained", function(self) self:HighlightText() end)
@@ -2958,15 +2905,9 @@ local function BuildSupportTab(panel)
     local supBoxY = -270
     local supBoxW = CONTENT_W - 20
     local supBoxH = CONTENT_H - math.abs(supBoxY) - 10 -- fill the rest of the panel
-    local supBox = CreateFrame("Frame", nil, panel, "BackdropTemplate")
+    local supBox = CreateFrame("Frame", nil, panel, "TooltipBackdropTemplate")
     supBox:SetSize(supBoxW, supBoxH)
     supBox:SetPoint("TOPLEFT", 6, supBoxY)
-    supBox:SetBackdrop({
-        bgFile   = "Interface\\DialogFrame\\UI-DialogBox-Background-Dark",
-        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
-        tile=true, tileSize=16, edgeSize=12,
-        insets={ left=3, right=3, top=3, bottom=3 }
-    })
     supBox:SetBackdropColor(0.06, 0.05, 0.03, 0.95)
     supBox:SetBackdropBorderColor(0.35, 0.30, 0.15, 0.7)
 
@@ -3009,7 +2950,8 @@ end
 -- ===============================================================================
 local function CreateMainWindow()
     local L = WarbandAccountant.L
-    local f = CreateFrame("Frame", "WarbandAccountantMainFrame", UIParent, "BasicFrameTemplateWithInset")
+    -- Blizzard's current flat window (metal frame border, flat background)
+    local f = CreateFrame("Frame", "WarbandAccountantMainFrame", UIParent, "DefaultPanelFlatTemplate")
     f:SetSize(WIN_W, WIN_H)
 
     local Data = WarbandAccountant.Data
@@ -3042,23 +2984,22 @@ local function CreateMainWindow()
     end)
     tinsert(UISpecialFrames, f:GetName())
 
-    f.TitleBg:SetHeight(25)
-    local title = f:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-    title:SetPoint("TOP", f.TitleBg, "TOP", 0, -6)
-    title:SetText("Warband Accountant")
+    f:SetTitle("Warband Accountant")
+    f.CloseButton = CreateFrame("Button", nil, f, "UIPanelCloseButtonDefaultAnchors")
+
+    -- Blizzard's flat panel background is partly see-through by design, which
+    -- lets busy scenes show through. Lay a solid fill over it, in the same
+    -- spot (the metal border still draws on top).
+    local solidBg = f:CreateTexture(nil, "BACKGROUND", nil, -8)
+    solidBg:SetPoint("TOPLEFT", f, "TOPLEFT", 6, -20)
+    solidBg:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -2, 2)
+    solidBg:SetColorTexture(0.06, 0.055, 0.05, 0.96)
+    f.solidBg = solidBg
 
     -- -- Nav panel ------------------------------------------------------------
-    local nav = CreateFrame("Frame", nil, f, "BackdropTemplate")
-    nav:SetSize(NAV_W, WIN_H - 36)
-    nav:SetPoint("TOPLEFT", f, "TOPLEFT", 4, -30)
-    nav:SetBackdrop({
-        bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background-Dark",
-        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
-        tile=true, tileSize=16, edgeSize=10,
-        insets={ left=2, right=2, top=2, bottom=2 }
-    })
-    nav:SetBackdropColor(0.06, 0.05, 0.03, 0.98)
-    nav:SetBackdropBorderColor(0.35, 0.30, 0.15, 0.6)
+    local nav = CreateFrame("Frame", nil, f, "InsetFrameTemplate")
+    nav:SetSize(NAV_W, WIN_H - 32)
+    nav:SetPoint("TOPLEFT", f, "TOPLEFT", 8, -26)
 
     -- Top nav buttons
     local btnOverview  = CreateNavButton(nav, "  " .. L.NAV_OVERVIEW,  "overview",  -8)
@@ -3084,7 +3025,10 @@ local function CreateMainWindow()
     btnSettings:SetPoint("BOTTOM", btnChangelog, "TOP", 0, 0)
 
     -- Separator between top and bottom groups
-    local navSep = nav:CreateTexture(nil, "ARTWORK")
+    -- On its own child frame so it draws above the inset art
+    local navSepHolder = CreateFrame("Frame", nil, nav)
+    navSepHolder:SetAllPoints(nav)
+    local navSep = navSepHolder:CreateTexture(nil, "ARTWORK")
     navSep:SetColorTexture(0.3, 0.27, 0.12, 0.5)
     navSep:SetHeight(1)
     navSep:SetPoint("BOTTOMLEFT", btnSettings, "TOPLEFT",  0, 0)
@@ -3140,7 +3084,7 @@ local function CreateMainWindow()
     -- -- Content panels -------------------------------------------------------
     local function MakePanel()
         local p = CreateFrame("Frame", nil, f)
-        p:SetPoint("TOPLEFT",     f, "TOPLEFT",     NAV_W + 10, -32)
+        p:SetPoint("TOPLEFT",     f, "TOPLEFT",     NAV_W + 14, -28)
         p:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -6,          6)
         p:Hide()
         return p

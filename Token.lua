@@ -4,7 +4,9 @@ local Token = {}
 WarbandAccountant.Token = Token
 
 -- Main frame and locals
-local frame = CreateFrame("Frame", "WBATokenPriceFrame", UIParent, "BackdropTemplate")
+-- Tooltip-style box: the same modern border tooltips use. Still supports
+-- SetBackdropColor / SetBackdropBorderColor for the frame color setting.
+local frame = CreateFrame("Frame", "WBATokenPriceFrame", UIParent, "TooltipBackdropTemplate")
 local labelText, priceText, priceIndicator, weeklyText
 local updateTicker
 local lastAlertTime = 0
@@ -222,12 +224,6 @@ end
 
 local function SetupFrame()
     frame:SetSize(180, 40)
-    frame:SetBackdrop({
-        bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background",
-        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
-        tile = true, tileSize = 16, edgeSize = 12,
-        insets = { left = 4, right = 4, top = 4, bottom = 4 }
-    })
 
     frame:SetMovable(true)
     frame:EnableMouse(true)
@@ -260,7 +256,10 @@ local function SetupFrame()
     priceText:SetPoint("LEFT", labelText, "RIGHT", 5, 0)
     priceText:SetTextColor(1, 1, 1)
 
-    priceIndicator = frame:CreateTexture(nil, "OVERLAY")
+    -- Arrow indicator (own child frame so it always draws above the backdrop)
+    local indicatorHolder = CreateFrame("Frame", nil, frame)
+    indicatorHolder:SetAllPoints(frame)
+    priceIndicator = indicatorHolder:CreateTexture(nil, "OVERLAY")
     priceIndicator:SetSize(16, 16)
     priceIndicator:Hide()
 

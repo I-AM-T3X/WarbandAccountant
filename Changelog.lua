@@ -20,6 +20,7 @@ local ADDON_NAME, WarbandAccountant = ...
 
 -- Ordered newest-first. Add new version strings here when releasing.
 WarbandAccountant.ChangelogVersions = {
+    "2.3.1",
     "2.3.0",
     "2.2.0",
     "2.1.9",
@@ -44,6 +45,16 @@ WarbandAccountant.ChangelogIcon = "Interface\\AddOns\\WarbandAccountant\\Texture
 
 -- Keyed by version string. Each value is a list of entry tables.
 WarbandAccountant.Changelog = {
+
+    ["2.3.1"] = {
+        { tag="Improve", text="Refreshed look" },
+        { tag=nil,       text="The window, cards and side menu now use Blizzard's current frame art with a solid background, so busy scenes no longer show through." },
+        { tag="Improve", text="Dropdowns and scroll bars use Blizzard's newer style" },
+        { tag=nil,       text="Long lists, like the End Date day picker, now scroll." },
+        { tag="Improve", text="Text boxes line up with their labels and look greyed out when disabled" },
+        { tag="Fix",     text="End Date options not unlocking right away" },
+        { tag=nil,       text="Setting a goal by typing an amount now unlocks the End Date options immediately instead of after reopening the tab." },
+    },
 
     ["2.3.0"] = {
         { tag="New",     text="Savings Goals" },
