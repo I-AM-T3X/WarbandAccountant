@@ -20,6 +20,7 @@ local ADDON_NAME, WarbandAccountant = ...
 
 -- Ordered newest-first. Add new version strings here when releasing.
 WarbandAccountant.ChangelogVersions = {
+    "2.3.2",
     "2.3.1",
     "2.3.0",
     "2.2.0",
@@ -46,6 +47,11 @@ WarbandAccountant.ChangelogIcon = "Interface\\AddOns\\WarbandAccountant\\Texture
 -- Keyed by version string. Each value is a list of entry tables.
 WarbandAccountant.Changelog = {
 
+    ["2.3.2"] = {
+        { tag="Improve", text="Lock the floating token frame" },
+        { tag=nil,       text="New checkbox in Settings > Token Price that locks the floating frame in place so it can't be dragged by accident. Right-click still opens Token History." },
+    },
+
     ["2.3.1"] = {
         { tag="Improve", text="Refreshed look" },
         { tag=nil,       text="The window, cards and side menu now use Blizzard's current frame art with a solid background, so busy scenes no longer show through." },
@@ -54,6 +60,8 @@ WarbandAccountant.Changelog = {
         { tag="Improve", text="Text boxes line up with their labels and look greyed out when disabled" },
         { tag="Fix",     text="End Date options not unlocking right away" },
         { tag=nil,       text="Setting a goal by typing an amount now unlocks the End Date options immediately instead of after reopening the tab." },
+        { tag="Fix",     text="Settings tab not scrolling all the way down" },
+        { tag=nil,       text="The scroll area was slightly too short, so the bottom of the Danger Zone box was cut off." },
     },
 
     ["2.3.0"] = {

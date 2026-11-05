@@ -316,6 +316,7 @@ WarbandAccountant.LocaleData["zhCN"] = {
 
     -- Floating token frame
     SETTINGS_TOKEN_WEEKLY = "在浮动框架上显示每周利润",
+    SETTINGS_TOKEN_LOCK = "锁定浮动框架位置",
     TOKEN_FLOATING_WEEKLY = "每周利润：",
 
     -- Tutorial

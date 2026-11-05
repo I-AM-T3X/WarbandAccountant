@@ -35,6 +35,7 @@ local DEFAULTS = {
     updateInterval = 300,
     showFloatingFrame = true,
     showWeeklyIncome = false,
+    lockFrame = false,
 }
 Token.DEFAULTS = DEFAULTS
 
@@ -228,7 +229,11 @@ local function SetupFrame()
     frame:SetMovable(true)
     frame:EnableMouse(true)
     frame:RegisterForDrag("LeftButton")
-    frame:SetScript("OnDragStart", frame.StartMoving)
+    frame:SetScript("OnDragStart", function(self)
+        -- Locked frames can't be dragged. Right-click and the tooltip still work.
+        if TokenPriceDisplaySettings and TokenPriceDisplaySettings.lockFrame == true then return end
+        self:StartMoving()
+    end)
     frame:SetScript("OnDragStop", function()
         frame:StopMovingOrSizing()
         SaveFramePosition()

@@ -1696,18 +1696,22 @@ local function BuildSettingsTab(outerPanel)
                 Token:UpdateWeeklyLine()
             end)
 
+        MakeCB(tokenBox, L.SETTINGS_TOKEN_LOCK, 10, -168,
+            function() return tokenSettings.lockFrame == true end,
+            function(v) tokenSettings.lockFrame = v and true or false end)
+
         -- Alerts
-        MakeCB(tokenBox, L.SETTINGS_TOKEN_ALERTS, 10, -168,
+        MakeCB(tokenBox, L.SETTINGS_TOKEN_ALERTS, 10, -192,
             function() return tokenSettings.alertEnabled end,
             function(v) tokenSettings.alertEnabled = v end)
 
         local alertLbl = tokenBox:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-        alertLbl:SetPoint("TOPLEFT", 34, -198)
+        alertLbl:SetPoint("TOPLEFT", 34, -222)
         alertLbl:SetText(L.SETTINGS_TOKEN_THRESHOLDS)
         alertLbl:SetTextColor(COLOR_GREY.r, COLOR_GREY.g, COLOR_GREY.b)
 
         local lowLbl = tokenBox:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-        lowLbl:SetPoint("TOPLEFT", 34, -224)
+        lowLbl:SetPoint("TOPLEFT", 34, -248)
         lowLbl:SetText(L.SETTINGS_TOKEN_LOW)
         lowLbl:SetTextColor(COLOR_WHITE.r, COLOR_WHITE.g, COLOR_WHITE.b)
 
@@ -1739,7 +1743,7 @@ local function BuildSettingsTab(outerPanel)
         -- Import legacy data, description underneath
         local importBtn = CreateFrame("Button", nil, tokenBox, "UIPanelButtonTemplate")
         importBtn:SetSize(190, 22)
-        importBtn:SetPoint("TOPLEFT", 10, -254)
+        importBtn:SetPoint("TOPLEFT", 10, -278)
         importBtn:SetText(L.SETTINGS_TOKEN_IMPORT)
         importBtn:SetScript("OnClick", function()
             local count, err = Token:ImportLegacyHistory()

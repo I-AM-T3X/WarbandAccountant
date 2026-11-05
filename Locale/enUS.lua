@@ -345,6 +345,7 @@ WarbandAccountant.LocaleData["enUS"] = {
 
     -- Floating token frame
     SETTINGS_TOKEN_WEEKLY = "Show weekly income on floating frame",
+    SETTINGS_TOKEN_LOCK   = "Lock floating frame position",
     TOKEN_FLOATING_WEEKLY = "Weekly Profit:",
 
     -- Tutorial
